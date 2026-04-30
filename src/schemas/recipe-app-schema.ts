@@ -52,7 +52,7 @@ export const groceryListSchema: CollectionSchema = {
     { name: 'ingredient', storage: 'text', interpretation: 'plain' },
     { name: 'recipeId', storage: 'text', interpretation: 'plain' },
     { name: 'recipeTitle', storage: 'text', interpretation: 'plain' },
-    { name: 'checked', storage: 'text', interpretation: { kind: 'boolean' } },
+    { name: 'checked', storage: 'number', interpretation: { kind: 'boolean' } },
     { name: 'addedAt', storage: 'text', interpretation: 'plain' },
   ],
   ownerField: 'ownerId',

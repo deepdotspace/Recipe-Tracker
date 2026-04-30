@@ -4,14 +4,15 @@
 
 import { useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { useQuery, useMutations } from 'deepspace'
-import { Button } from '../components/ui'
+import { useQuery, useMutations, useRecordContext } from 'deepspace'
+import { Button, useToast } from '../components/ui'
+import { isGroceryChecked } from '../utils/groceryChecked'
 
 interface GroceryItem {
   ingredient: string
   recipeId: string
   recipeTitle: string
-  checked: boolean
+  checked?: boolean | number | string
   addedAt: string
 }
 
@@ -22,15 +23,17 @@ interface GroceryRecord {
 
 export default function GroceryListPage() {
   const { records: items } = useQuery('groceryList') as { records: GroceryRecord[] }
-  const { put, remove, create } = useMutations('groceryList')
-  
+  const { putConfirmed, removeConfirmed, createConfirmed } = useMutations('groceryList')
+  const { ready: recordStoreReady } = useRecordContext()
+  const { error: toastError } = useToast()
+
   const [newItem, setNewItem] = useState('')
   
   // Sort: unchecked first, then by date added
   const sortedItems = [...(items || [])].sort((a, b) => {
-    if (a.data.checked !== b.data.checked) {
-      return a.data.checked ? 1 : -1
-    }
+    const ac = isGroceryChecked(a.data.checked)
+    const bc = isGroceryChecked(b.data.checked)
+    if (ac !== bc) return ac ? 1 : -1
     return new Date(b.data.addedAt).getTime() - new Date(a.data.addedAt).getTime()
   })
   
@@ -43,43 +46,88 @@ export default function GroceryListPage() {
   }, {} as Record<string, GroceryRecord[]>)
   
   const toggleChecked = useCallback(async (record: GroceryRecord) => {
-    await put(record.recordId, {
-      ...record.data,
-      checked: !record.data.checked,
-    })
-  }, [put])
-  
+    if (!recordStoreReady) {
+      toastError('Not connected', 'Wait for the app to finish loading, then try again.')
+      return
+    }
+    try {
+      await putConfirmed(record.recordId, {
+        ...record.data,
+        checked: !isGroceryChecked(record.data.checked),
+      })
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Could not update item'
+      toastError('Failed to check off item', message)
+    }
+  }, [putConfirmed, recordStoreReady, toastError])
+
   const removeItem = useCallback(async (recordId: string) => {
-    await remove(recordId)
-  }, [remove])
+    if (!recordStoreReady) {
+      toastError('Not connected', 'Wait for the app to finish loading, then try again.')
+      return
+    }
+    try {
+      await removeConfirmed(recordId)
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Could not remove item'
+      toastError('Failed to remove item', message)
+    }
+  }, [removeConfirmed, recordStoreReady, toastError])
   
   const addManualItem = useCallback(async () => {
     if (!newItem.trim()) return
-    await create({
-      ingredient: newItem.trim(),
-      recipeId: '',
-      recipeTitle: '',
-      checked: false,
-      addedAt: new Date().toISOString(),
-    })
-    setNewItem('')
-  }, [newItem, create])
+    if (!recordStoreReady) {
+      toastError('Not connected', 'Wait for the app to finish loading, then try again.')
+      return
+    }
+    try {
+      await createConfirmed({
+        ingredient: newItem.trim(),
+        recipeId: '',
+        recipeTitle: '',
+        checked: false,
+        addedAt: new Date().toISOString(),
+      })
+      setNewItem('')
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Could not add item'
+      toastError('Failed to add item', message)
+    }
+  }, [newItem, createConfirmed, recordStoreReady, toastError])
   
   const clearChecked = useCallback(async () => {
-    const checkedItems = items?.filter(i => i.data.checked) || []
-    for (const item of checkedItems) {
-      await remove(item.recordId)
+    if (!recordStoreReady) {
+      toastError('Not connected', 'Wait for the app to finish loading, then try again.')
+      return
     }
-  }, [items, remove])
-  
+    const checkedItems = items?.filter((i) => isGroceryChecked(i.data.checked)) || []
+    try {
+      for (const item of checkedItems) {
+        await removeConfirmed(item.recordId)
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Could not clear items'
+      toastError('Failed to clear checked items', message)
+    }
+  }, [items, removeConfirmed, recordStoreReady, toastError])
+
   const clearAll = useCallback(async () => {
-    for (const item of items || []) {
-      await remove(item.recordId)
+    if (!recordStoreReady) {
+      toastError('Not connected', 'Wait for the app to finish loading, then try again.')
+      return
     }
-  }, [items, remove])
+    try {
+      for (const item of items || []) {
+        await removeConfirmed(item.recordId)
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Could not clear list'
+      toastError('Failed to clear list', message)
+    }
+  }, [items, removeConfirmed, recordStoreReady, toastError])
   
-  const uncheckedCount = items?.filter(i => !i.data.checked).length || 0
-  const checkedCount = items?.filter(i => i.data.checked).length || 0
+  const uncheckedCount = items?.filter((i) => !isGroceryChecked(i.data.checked)).length || 0
+  const checkedCount = items?.filter((i) => isGroceryChecked(i.data.checked)).length || 0
   
   return (
     <div className="min-h-screen bg-surface">
@@ -126,7 +174,7 @@ export default function GroceryListPage() {
               placeholder="Add an item manually..."
               className="flex-1 px-4 py-2 bg-surface-input border border-border rounded-lg text-content placeholder:text-content-muted focus:outline-none focus:border-primary text-sm"
             />
-            <Button onClick={addManualItem} disabled={!newItem.trim()}>
+            <Button onClick={addManualItem} disabled={!newItem.trim() || !recordStoreReady}>
               Add
             </Button>
           </div>
@@ -158,27 +206,30 @@ export default function GroceryListPage() {
                 {recipeName || 'Manual Items'}
               </h2>
               <span className="text-xs text-content-muted">
-                ({recipeItems.filter(i => !i.data.checked).length} remaining)
+                ({recipeItems.filter((i) => !isGroceryChecked(i.data.checked)).length} remaining)
               </span>
             </div>
             
             <div className="bg-surface-elevated rounded-xl border border-border overflow-hidden">
-              {recipeItems.map((item, idx) => (
+              {recipeItems.map((item, idx) => {
+                const done = isGroceryChecked(item.data.checked)
+                return (
                 <div
                   key={item.recordId}
                   className={`flex items-center gap-3 p-4 ${
                     idx > 0 ? 'border-t border-border' : ''
-                  } ${item.data.checked ? 'bg-surface-overlay/50' : ''}`}
+                  } ${done ? 'bg-surface-overlay/50' : ''}`}
                 >
                   <button
+                    type="button"
                     onClick={() => toggleChecked(item)}
                     className={`flex-shrink-0 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${
-                      item.data.checked
+                      done
                         ? 'bg-success border-success text-white'
                         : 'border-border hover:border-primary'
                     }`}
                   >
-                    {item.data.checked && (
+                    {done && (
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
                       </svg>
@@ -186,12 +237,13 @@ export default function GroceryListPage() {
                   </button>
                   
                   <span className={`flex-1 text-sm ${
-                    item.data.checked ? 'text-content-muted line-through' : 'text-content'
+                    done ? 'text-content-muted line-through' : 'text-content'
                   }`}>
                     {item.data.ingredient}
                   </span>
                   
                   <button
+                    type="button"
                     onClick={() => removeItem(item.recordId)}
                     className="flex-shrink-0 p-1.5 text-content-muted hover:text-danger rounded-lg hover:bg-danger-muted transition-colors"
                   >
@@ -200,7 +252,8 @@ export default function GroceryListPage() {
                     </svg>
                   </button>
                 </div>
-              ))}
+                )
+              })}
             </div>
           </div>
         ))}

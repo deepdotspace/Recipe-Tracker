@@ -4,8 +4,8 @@
 
 import { useState, useCallback, useEffect, useMemo } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
-import { useQuery, useMutations } from 'deepspace'
-import { Button } from '../components/ui'
+import { useQuery, useMutations, useRecordContext } from 'deepspace'
+import { Button, buttonVariants, cn, useToast } from '../components/ui'
 import { MEAL_TYPE_OPTIONS, MEAL_TYPE_CONFIG, type MealType } from '../constants'
 
 interface Recipe {
@@ -71,12 +71,15 @@ function normalizeForGrocery(ingredient: string): string {
 export default function RecipeDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  
+  const { ready: recordStoreReady } = useRecordContext()
+  const { success: toastSuccess, error: toastError } = useToast()
+  const [addingGroceries, setAddingGroceries] = useState(false)
+
   const { records: recipes } = useQuery('recipes') as { records: RecipeRecord[] }
   const { put, remove } = useMutations('recipes')
-  
+
   const { records: groceryItems } = useQuery('groceryList') as { records: GroceryRecord[] }
-  const { create: addToGrocery } = useMutations('groceryList')
+  const { createConfirmed: addToGroceryConfirmed } = useMutations('groceryList')
   
   const recipe = recipes?.find(r => r.recordId === id)
   
@@ -169,18 +172,78 @@ export default function RecipeDetailPage() {
     return ingredientsInGroceryList.has(normalizeIngredient(ingredient))
       || ingredientsInGroceryList.has(normalizeIngredient(normalizeForGrocery(ingredient)))
   }, [ingredientsInGroceryList])
-  
+
+  const ingredientsMissingFromGrocery = useMemo(() => {
+    const list = recipe?.data.ingredients ?? []
+    return list.filter((ing) => ing.trim() && !isInGroceryList(ing))
+  }, [recipe?.data.ingredients, isInGroceryList])
+
   const addIngredientToGrocery = useCallback(async (ingredient: string) => {
     if (!recipe || isInGroceryList(ingredient)) return
-    await addToGrocery({
-      ingredient: normalizeForGrocery(ingredient),
-      recipeId: recipe.recordId,
-      recipeTitle: recipe.data.title,
-      checked: false,
-      addedAt: new Date().toISOString(),
-    })
-  }, [recipe, isInGroceryList, addToGrocery])
-  
+    if (!recordStoreReady) {
+      toastError('Not connected', 'Wait for the app to finish loading, then try again.')
+      return
+    }
+    try {
+      await addToGroceryConfirmed({
+        ingredient: normalizeForGrocery(ingredient),
+        recipeId: recipe.recordId,
+        recipeTitle: recipe.data.title,
+        checked: false,
+        addedAt: new Date().toISOString(),
+      })
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Could not add to grocery list'
+      toastError('Failed to add item', message)
+    }
+  }, [recipe, isInGroceryList, addToGroceryConfirmed, recordStoreReady, toastError])
+
+  const addAllIngredientsToGrocery = useCallback(async () => {
+    if (!recipe || ingredientsMissingFromGrocery.length === 0) return
+    if (!recordStoreReady) {
+      toastError('Not connected', 'Wait for the app to finish loading, then try again.')
+      return
+    }
+    setAddingGroceries(true)
+    const seen = new Set<string>()
+    let added = 0
+    try {
+      for (const ing of ingredientsMissingFromGrocery) {
+        const key = normalizeIngredient(normalizeForGrocery(ing))
+        if (seen.has(key)) continue
+        seen.add(key)
+        await addToGroceryConfirmed({
+          ingredient: normalizeForGrocery(ing),
+          recipeId: recipe.recordId,
+          recipeTitle: recipe.data.title,
+          checked: false,
+          addedAt: new Date().toISOString(),
+        })
+        added++
+      }
+      if (added === 0) {
+        toastSuccess('Nothing new to add', 'Those ingredients are already on your grocery list.')
+      } else {
+        toastSuccess(
+          'Added to grocery list',
+          added === 1 ? '1 ingredient added. Open Grocery to see your list.' : `${added} ingredients added. Open Grocery to see your list.`,
+        )
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Could not add to grocery list'
+      toastError('Failed to add items', message)
+    } finally {
+      setAddingGroceries(false)
+    }
+  }, [
+    recipe,
+    ingredientsMissingFromGrocery,
+    addToGroceryConfirmed,
+    recordStoreReady,
+    toastError,
+    toastSuccess,
+  ])
+
   const updateMealType = useCallback(async (mealType: string) => {
     if (!recipe) return
     await put(recipe.recordId, {
@@ -420,6 +483,43 @@ export default function RecipeDetailPage() {
                   })}
                 </div>
               </div>
+
+              {/* Add to grocery — primary action */}
+              {(data.ingredients?.length ?? 0) > 0 && (
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2 mt-5">
+                  <Button
+                    size="lg"
+                    className="w-full sm:w-auto gap-2"
+                    onClick={addAllIngredientsToGrocery}
+                    disabled={
+                      addingGroceries ||
+                      !recordStoreReady ||
+                      ingredientsMissingFromGrocery.length === 0
+                    }
+                    loading={addingGroceries}
+                    title={
+                      !recordStoreReady
+                        ? 'Wait for the app to finish connecting, then try again.'
+                        : ingredientsMissingFromGrocery.length === 0
+                          ? 'Every ingredient is already on your grocery list.'
+                          : 'Add all missing ingredients to your grocery list.'
+                    }
+                  >
+                    <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+                    </svg>
+                    {ingredientsMissingFromGrocery.length === 0
+                      ? 'All ingredients on grocery list'
+                      : `Add to grocery list (${ingredientsMissingFromGrocery.length})`}
+                  </Button>
+                  <Link
+                    to="/grocery"
+                    className={cn(buttonVariants({ variant: 'secondary', size: 'lg' }), 'w-full sm:w-auto')}
+                  >
+                    View grocery list
+                  </Link>
+                </div>
+              )}
               
               <div className="flex items-center gap-4 mt-4 text-sm text-content-muted flex-wrap">
                 <span>Saved {new Date(data.savedAt).toLocaleDateString()}</span>
@@ -455,7 +555,7 @@ export default function RecipeDetailPage() {
         
         {/* Ingredients */}
         <div className="bg-surface-elevated rounded-2xl shadow-card border border-border overflow-hidden mb-6">
-          <div className="p-4 border-b border-border flex items-center justify-between">
+          <div className="p-4 border-b border-border flex flex-wrap items-center gap-2 justify-between">
             <h2 className="font-semibold text-content">Ingredients</h2>
             {editingIngredients ? (
               <div className="flex gap-2">
@@ -470,9 +570,26 @@ export default function RecipeDetailPage() {
                 </Button>
               </div>
             ) : (
-              <Button variant="ghost" size="sm" onClick={() => setEditingIngredients(true)}>
-                Edit
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                {(data.ingredients?.length ?? 0) > 0 && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={addAllIngredientsToGrocery}
+                    disabled={
+                      addingGroceries ||
+                      !recordStoreReady ||
+                      ingredientsMissingFromGrocery.length === 0
+                    }
+                    loading={addingGroceries}
+                  >
+                    Add to grocery
+                  </Button>
+                )}
+                <Button variant="ghost" size="sm" onClick={() => setEditingIngredients(true)}>
+                  Edit
+                </Button>
+              </div>
             )}
           </div>
           
@@ -512,19 +629,28 @@ export default function RecipeDetailPage() {
                 ) : (
                   data.ingredients.map((ing, i) => {
                     const inList = isInGroceryList(ing)
+                    const addBlocked = !recordStoreReady && !inList
                     return (
                       <li key={i} className="flex items-center gap-3">
                         <span className="text-primary">•</span>
                         <span className="flex-1 text-content-secondary">{ing}</span>
                         <button
-                          onClick={() => !inList && addIngredientToGrocery(ing)}
-                          disabled={inList}
+                          onClick={() => !inList && recordStoreReady && addIngredientToGrocery(ing)}
+                          disabled={inList || addBlocked}
                           className={`flex-shrink-0 p-1.5 rounded-lg transition-colors ${
                             inList
                               ? 'bg-success-muted text-success cursor-default'
-                              : 'bg-surface-overlay text-content-muted hover:bg-primary-muted hover:text-primary'
+                              : addBlocked
+                                ? 'bg-surface-overlay text-content-muted opacity-50 cursor-not-allowed'
+                                : 'bg-surface-overlay text-content-muted hover:bg-primary-muted hover:text-primary'
                           }`}
-                          title={inList ? 'Already in grocery list' : 'Add to grocery list'}
+                          title={
+                            inList
+                              ? 'Already in grocery list'
+                              : addBlocked
+                                ? 'Wait for the app to finish connecting, then try again.'
+                                : 'Add to grocery list'
+                          }
                         >
                           {inList ? (
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
