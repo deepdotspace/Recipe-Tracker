@@ -1,21 +1,28 @@
 /**
  * AI Tool Definitions — converts DeepSpace BUILT_IN_TOOLS to Vercel AI SDK tools.
  *
- * Only exposes read-only tools so the assistant can inspect data but never mutate it.
+ * The assistant can read AND modify data. Per-collection RBAC at the DO
+ * layer is the actual security boundary — the user's role determines what
+ * each tool call is allowed to do, regardless of what's in this allowlist.
+ * Trim entries below if you want a stricter assistant for your app.
  */
 
 import { tool } from 'ai'
+import type { ToolSet } from 'ai'
 import { z } from 'zod'
 import { BUILT_IN_TOOLS } from 'deepspace/worker'
 import type { ToolSchema, CollectionSchema } from 'deepspace/worker'
 
 type ToolExecutor = (toolName: string, params: Record<string, unknown>) => Promise<unknown>
 
-const READ_ONLY_TOOL_NAMES = [
+const ALLOWED_TOOL_NAMES = [
   'schema.list',
   'schema.describe',
   'records.query',
   'records.get',
+  'records.create',
+  'records.update',
+  'records.delete',
   'user.current',
 ]
 
@@ -48,8 +55,17 @@ export function buildSystemPrompt(appName: string, schemas: CollectionSchema[]):
 
   return [
     `You are the assistant for the "${appName}" app on DeepSpace.`,
-    'You are read-only — you can inspect data but never create, update, or delete anything.',
-    'Use the available tools to look up facts before answering. Do not invent data.',
+    'You can read and modify the user\'s data via the available tools. The',
+    'user\'s own role and permissions still apply at the data layer — your',
+    'tool calls run as the calling user, so you can only do what they could.',
+    '',
+    'Be careful with mutations:',
+    '- Confirm intent before destructive actions (delete, bulk update).',
+    '- Operate only on collections the user explicitly mentioned.',
+    '- After a successful write, briefly confirm what changed.',
+    '- If a write is denied (RBAC), tell the user plainly — do not retry blindly.',
+    '',
+    'Use tools to look up facts before answering. Do not invent data.',
     'If data is missing, say so plainly. Keep answers concise.',
     '',
     'Available collections:',
@@ -61,16 +77,16 @@ export function buildSystemPrompt(appName: string, schemas: CollectionSchema[]):
 // Tool definitions
 // ============================================================================
 
-export function buildReadOnlyTools(executor: ToolExecutor) {
-  const tools: Record<string, ReturnType<typeof tool>> = {}
+export function buildTools(executor: ToolExecutor): ToolSet {
+  const tools: ToolSet = {}
 
   for (const def of BUILT_IN_TOOLS) {
-    if (!READ_ONLY_TOOL_NAMES.includes(def.name)) continue
+    if (!ALLOWED_TOOL_NAMES.includes(def.name)) continue
     const safeName = def.name.replace('.', '_')
     tools[safeName] = tool({
       description: def.description,
-      parameters: buildZodSchema(def),
-      execute: async (params) => executor(def.name, params as Record<string, unknown>),
+      inputSchema: buildZodSchema(def),
+      execute: async (params: Record<string, unknown>) => executor(def.name, params),
     })
   }
 

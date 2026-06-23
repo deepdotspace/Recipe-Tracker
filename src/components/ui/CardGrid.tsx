@@ -42,7 +42,9 @@ export function GridCard({ children, onClick, className = '', hoverable = true, 
       onClick={onClick}
       className={cn(
         'group relative bg-card rounded-xl border border-border overflow-hidden transition-all duration-200',
-        hoverable && 'hover:border-border hover:shadow-card-hover hover:-translate-y-0.5',
+        // Literal shadow rather than shadow-card-hover token. See
+        // Card.tsx + docs/platform/theming-shadows.md.
+        hoverable && 'hover:border-border hover:shadow-[0_2px_8px_-2px_rgba(0,0,0,0.10)] hover:-translate-y-0.5',
         onClick && 'cursor-pointer',
         className
       )}
@@ -76,6 +78,7 @@ function GridCardImage({ src, alt = '', height = 'md', className = '' }: GridCar
       <img
         src={src}
         alt={alt}
+        referrerPolicy="no-referrer"
         className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
       />
     </div>

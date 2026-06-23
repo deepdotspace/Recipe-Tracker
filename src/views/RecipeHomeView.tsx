@@ -3,7 +3,7 @@
  */
 
 import { useState, useCallback } from 'react'
-import { useQuery, useMutations, useRecordContext, integration } from 'deepspace'
+import { useQuery, useMutations, useRecordContext, integration, useAuth, AuthOverlay } from 'deepspace'
 import { useNavigate, Link } from 'react-router-dom'
 import { Button, useToast } from '../components/ui'
 import { MEAL_TYPE_OPTIONS, MEAL_TYPE_CONFIG, type MealType } from '../constants'
@@ -39,15 +39,17 @@ type FirecrawlSearchIntegrationData = {
   data: Array<{ markdown?: string; url?: string }>
 }
 
-type InstagramExtractIntegrationData = {
-  caption: string
-  mediaUrls?: string[]
-  permalink?: string
-  author?: { username?: string }
-}
-
 type FirecrawlScrapeIntegrationData = {
-  data: { markdown?: string; metadata?: { title?: string } }
+  data: {
+    markdown?: string
+    metadata?: {
+      title?: string
+      description?: string
+      ogTitle?: string
+      ogDescription?: string
+      ogImage?: string
+    }
+  }
 }
 
 const RECIPE_SYSTEM_PROMPT = `You are a recipe parser. Extract structured recipe data from the provided content.
@@ -310,12 +312,12 @@ export default function HomePage() {
   const [loadingStep, setLoadingStep] = useState<'extract' | 'scrape' | 'parse' | 'websearch'>('extract')
   const [error, setError] = useState<string | null>(null)
   const [preview, setPreview] = useState<Partial<Recipe> | null>(null)
-  const [debugInfo, setDebugInfo] = useState<{ rawCaption: string; truncated: boolean; aiParsed: { title: string; ingredients: string[]; instructions: string[]; tags: string[] } } | null>(null)
-  const [showDebug, setShowDebug] = useState(false)
   const [savingRecipe, setSavingRecipe] = useState(false)
 
   const { ready: recordStoreReady } = useRecordContext()
   const { success: toastSuccess, error: toastError } = useToast()
+  const { isSignedIn } = useAuth()
+  const [showAuthModal, setShowAuthModal] = useState(false)
   
   const { records: recipes } = useQuery('recipes') as { records: RecipeRecord[] }
   const { createConfirmed } = useMutations('recipes')
@@ -324,39 +326,44 @@ export default function HomePage() {
   
   const extractFromInstagram = useCallback(async (targetUrl: string) => {
     setLoadingStep('extract')
-    
-    const response = await integration.post<InstagramExtractIntegrationData>('instagram/extract-content', {
-      url: targetUrl,
+
+    // DeepSpace has no Instagram integration, so the app's own worker fetches
+    // the public post server-side (crawler UA) and parses the OG tags — the
+    // same logic as the original HyperFoodie backend service. The caption is
+    // usually truncated, which trips the web-search fallback below for the
+    // full recipe — exactly as the original app worked.
+    const response = await fetch('/api/instagram/extract', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: targetUrl }),
     })
-    
-    if (!response.success || !response.data) {
-      throw new Error(response.error || 'Failed to extract content from Instagram')
+
+    const result = (await response.json().catch(() => ({}))) as {
+      caption?: string
+      imageUrl?: string
+      author?: string
+      permalink?: string
+      error?: string
     }
-    
-    const { caption, mediaUrls, permalink, author } = response.data
-    
-    if (!caption) {
-      throw new Error('No caption found in this Instagram post')
+
+    if (!response.ok || !result.caption) {
+      throw new Error(result.error || 'Failed to extract content from Instagram')
     }
-    
-    // Try multiple strategies for author extraction:
-    // 1. API author field (most reliable)
-    // 2. Extract username from permalink/URL (e.g. instagram.com/username/reel/CODE)
-    // 3. Extract from caption @mentions (fallback)
-    let authorName = author?.username || ''
-    if (!authorName) {
-      authorName = extractUsernameFromUrl(permalink || '') || extractUsernameFromUrl(targetUrl) || ''
-    }
-    if (!authorName) {
-      authorName = extractAuthorFromCaption(caption) || 'Unknown'
-    }
-    
+
+    // Author: API value first, then the URL, then caption @mentions.
+    const authorName =
+      result.author ||
+      extractUsernameFromUrl(result.permalink || targetUrl) ||
+      extractUsernameFromUrl(targetUrl) ||
+      extractAuthorFromCaption(result.caption) ||
+      'Unknown'
+
     return {
-      content: caption,
-      imageUrl: mediaUrls?.[0] || '',
-      sourceUrl: permalink || targetUrl,
+      content: result.caption,
+      imageUrl: result.imageUrl || '',
+      sourceUrl: result.permalink || targetUrl,
       author: authorName,
-      truncated: isCaptionTruncated(caption),
+      truncated: isCaptionTruncated(result.caption),
     }
   }, [])
   
@@ -403,49 +410,22 @@ export default function HomePage() {
     setLoading(true)
     setError(null)
     setPreview(null)
-    setDebugInfo(null)
-    setShowDebug(false)
-    
+
     try {
       const targetUrl = url.trim()
       let extracted: { content: string; imageUrl: string; sourceUrl: string; author: string; title?: string; truncated?: boolean }
       
       if (isInstagramUrl(targetUrl)) {
+        // extractFromInstagram already scrapes the post via Firecrawl; a
+        // truncated caption flows into the web-search fallback below.
         extracted = await extractFromInstagram(targetUrl)
-        
-        // If the Instagram API returned a truncated caption, try scraping
-        // the Instagram page directly to get the full text
-        if (extracted.truncated) {
-          setLoadingStep('scrape')
-          try {
-            const scrapeResponse = await integration.post<FirecrawlScrapeIntegrationData>('firecrawl/scrape', {
-              url: targetUrl,
-              formats: ['markdown'],
-              onlyMainContent: true,
-            })
-            const scraped = scrapeResponse?.data?.data?.markdown
-            // Only use scraped content if it's substantially longer than the truncated caption
-            if (scraped && scraped.length > extracted.content.length + 50) {
-              extracted = { ...extracted, content: scraped, truncated: false }
-            }
-          } catch {
-            // Scraping Instagram can fail — that's fine, we'll fall back to web search
-          }
-        }
       } else {
         extracted = await extractFromWebsite(targetUrl)
       }
       
       setLoadingStep('parse')
       const parsed = await parseRecipeWithAI(extracted.content)
-      
-      // Store debug info for inspection
-      setDebugInfo({
-        rawCaption: extracted.content,
-        truncated: extracted.truncated === true,
-        aiParsed: { ...parsed },
-      })
-      
+
       // If the caption was truncated by Instagram or the parsed data looks incomplete,
       // search the web for the full recipe (e.g., from the author's blog).
       // This is critical because the Instagram API often returns only a short snippet
@@ -522,6 +502,11 @@ export default function HomePage() {
   const saveRecipe = useCallback(async () => {
     if (!preview) return
 
+    if (!isSignedIn) {
+      setShowAuthModal(true)
+      return
+    }
+
     if (!recordStoreReady) {
       toastError('Not connected', 'Wait for the app to finish loading, then try again.')
       return
@@ -562,11 +547,11 @@ export default function HomePage() {
     } finally {
       setSavingRecipe(false)
     }
-  }, [preview, createConfirmed, navigate, recordStoreReady, toastError, toastSuccess])
+  }, [preview, createConfirmed, navigate, isSignedIn, recordStoreReady, toastError, toastSuccess])
   
   return (
-    <div className="h-full bg-surface overflow-y-auto">
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+    <div className="min-h-full">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         
         {/* Main Content Grid */}
         <div className="grid lg:grid-cols-5 gap-6">
@@ -637,10 +622,11 @@ export default function HomePage() {
                     <Button
                       size="sm"
                       onClick={saveRecipe}
-                      disabled={!recordStoreReady || savingRecipe}
+                      disabled={savingRecipe || (isSignedIn && !recordStoreReady)}
                     >
-                      {savingRecipe ? 'Saving…' : 'Save Recipe'}
+                      {savingRecipe ? 'Saving…' : isSignedIn ? 'Save Recipe' : 'Sign in to Save'}
                     </Button>
+                    {showAuthModal && <AuthOverlay onClose={() => setShowAuthModal(false)} />}
                   </div>
                 </div>
                 
@@ -740,58 +726,7 @@ export default function HomePage() {
                 </div>
               </div>
             )}
-            
-            {/* Debug Panel - Raw Instagram Data */}
-            {debugInfo && (
-              <div className="bg-surface-elevated rounded-2xl border border-border overflow-hidden">
-                <button
-                  onClick={() => setShowDebug(!showDebug)}
-                  className="w-full p-3 flex items-center justify-between text-left hover:bg-surface-overlay/50 transition-colors"
-                >
-                  <span className="text-sm font-medium text-content-secondary flex items-center gap-2">
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-                    </svg>
-                    Debug: Raw Extraction Data
-                  </span>
-                  <svg className={`w-4 h-4 text-content-muted transition-transform ${showDebug ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
-                
-                {showDebug && (
-                  <div className="border-t border-border p-4 space-y-4">
-                    {/* Raw Caption */}
-                    <div>
-                      <div className="flex items-center gap-2 mb-2">
-                        <h4 className="text-xs font-semibold text-content-muted uppercase tracking-wider">
-                          Raw Caption from Instagram ({debugInfo.rawCaption.length} chars)
-                        </h4>
-                        {debugInfo.truncated && (
-                          <span className="px-1.5 py-0.5 bg-warning-muted text-warning text-xs rounded font-medium">
-                            TRUNCATED
-                          </span>
-                        )}
-                      </div>
-                      <pre className="text-xs text-content-secondary bg-surface-overlay rounded-lg p-3 overflow-x-auto whitespace-pre-wrap max-h-64 overflow-y-auto border border-border font-mono">
-                        {debugInfo.rawCaption || '(empty)'}
-                      </pre>
-                    </div>
-                    
-                    {/* AI Parsed Result */}
-                    <div>
-                      <h4 className="text-xs font-semibold text-content-muted uppercase tracking-wider mb-2">
-                        AI Parsed Result
-                      </h4>
-                      <pre className="text-xs text-content-secondary bg-surface-overlay rounded-lg p-3 overflow-x-auto whitespace-pre-wrap max-h-64 overflow-y-auto border border-border font-mono">
-                        {JSON.stringify(debugInfo.aiParsed, null, 2)}
-                      </pre>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-            
+
           </div>
           
           {/* Right Column - Recent Recipes */}

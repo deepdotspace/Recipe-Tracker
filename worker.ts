@@ -16,27 +16,17 @@
 
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import {
-  verifyJwt,
-  verifyInternalSignature,
-  buildInternalPayload,
-  createDeepSpaceAI,
-} from 'deepspace/worker'
+import { verifyJwt, apiWorkerFetch, platformWorkerFetch, authWorkerFetch } from 'deepspace/worker'
 import type { JwtVerifierConfig, VerifyResult } from 'deepspace/worker'
-import {
-  RecordRoom,
-  YjsRoom,
-  CanvasRoom,
-  MediaRoom,
-  PresenceRoom,
-} from 'deepspace/worker'
-import type { ActionTools, ActionResult, DOManifest, DOBindings } from 'deepspace/worker'
-import { streamText } from 'ai'
+import { RecordRoom, YjsRoom, CanvasRoom, PresenceRoom, CronRoom, JobRoom } from 'deepspace/worker'
+import type { Job, JobContext, ActionTools, ActionResult, DOManifest, DOBindings } from 'deepspace/worker'
 import { actions } from './src/actions/index.js'
-import { handleCron } from './src/cron.js'
+import { tasks as cronTasks, runTask as runCronTask } from './src/cron.js'
+import { runJob } from './src/jobs.js'
 import { schemas } from './src/schemas.js'
 import { integrations } from './src/integrations.js'
-import { buildSystemPrompt, buildReadOnlyTools } from './src/ai/tools.js'
+import { registerAiChatRoutes } from './src/ai/chat-routes.js'
+import { extractInstagramPost } from './src/server/instagram.js'
 
 // =============================================================================
 // DO Manifest — declares all Durable Objects for dynamic deploy bindings
@@ -46,40 +36,93 @@ export const __DO_MANIFEST__ = [
   { binding: 'RECORD_ROOMS', className: 'AppRecordRoom', sqlite: true },
   { binding: 'YJS_ROOMS', className: 'AppYjsRoom', sqlite: true },
   { binding: 'CANVAS_ROOMS', className: 'AppCanvasRoom', sqlite: true },
-  { binding: 'MEDIA_ROOMS', className: 'AppMediaRoom', sqlite: true },
   { binding: 'PRESENCE_ROOMS', className: 'AppPresenceRoom', sqlite: true },
+  { binding: 'CRON_ROOMS', className: 'AppCronRoom', sqlite: true },
+  { binding: 'JOB_ROOMS', className: 'AppJobRoom', sqlite: true },
 ] as const satisfies DOManifest
 
 // =============================================================================
 // Durable Objects — extend to customize behavior
 // =============================================================================
 
-export class AppRecordRoom extends RecordRoom {
+export class AppRecordRoom extends RecordRoom<Env> {
   constructor(state: DurableObjectState, env: Env) {
     super(state, env, schemas, { ownerUserId: env.OWNER_USER_ID })
   }
 }
 
-export class AppYjsRoom extends YjsRoom {}
-export class AppCanvasRoom extends CanvasRoom {}
-export class AppMediaRoom extends MediaRoom {}
-export class AppPresenceRoom extends PresenceRoom {}
+export class AppYjsRoom extends YjsRoom<Env> {}
+export class AppCanvasRoom extends CanvasRoom<Env> {}
+export class AppPresenceRoom extends PresenceRoom<Env> {}
+
+/**
+ * AppCronRoom — runs scheduled tasks defined in src/cron.ts.
+ *
+ * Tasks are configured at construction time. The DO alarm fires at the
+ * next interval / cron-expression match, calls `onTask(name)`, and
+ * records the execution in its `cron_history` table. Admin clients can
+ * watch via the `useCronMonitor('app:<APP_NAME>')` hook.
+ */
+export class AppCronRoom extends CronRoom<Env> {
+  constructor(state: DurableObjectState, env: Env) {
+    super(state, env, { tasks: cronTasks })
+  }
+
+  protected async onTask(taskName: string): Promise<void> {
+    await runCronTask(taskName, this.env)
+  }
+}
+
+/**
+ * AppJobRoom — durable background-job queue defined in src/jobs.ts.
+ *
+ * Use this for any work that needs to outlive an HTTP response: AI
+ * generation, exports, renders, scheduled side effects. The DO alarm
+ * picks up queued jobs and calls `onJob(job, ctx)`; crashes mid-run are
+ * recovered automatically. Clients enqueue and subscribe via the
+ * `useJobs('app:<APP_NAME>')` hook; server-side code uses the
+ * `enqueueJob` helper from 'deepspace/worker'.
+ */
+export class AppJobRoom extends JobRoom<Env> {
+  constructor(state: DurableObjectState, env: Env) {
+    super(state, env)
+  }
+
+  protected async onJob(job: Job, ctx: JobContext): Promise<unknown> {
+    return await runJob(job, ctx, this.env)
+  }
+}
 
 // =============================================================================
 // Types
 // =============================================================================
 
-interface Env extends DOBindings<typeof __DO_MANIFEST__> {
+export interface Env extends DOBindings<typeof __DO_MANIFEST__> {
   ASSETS: Fetcher
-  FILES: R2Bucket
-  PLATFORM_WORKER: Fetcher
-  APP_IDENTITY_TOKEN: string
-  /** Set in production (service binding). */
-  API_WORKER?: Fetcher
   /**
-   * HTTPS base URL of the platform api-worker when the binding is absent
-   * (e.g. local `deepspace dev` writes this to `.dev.vars`).
+   * Upstream platform-worker. In production this is a [[services]] binding;
+   * in `deepspace dev` the binding is absent and the helper falls back to
+   * `PLATFORM_WORKER_URL` (written into .dev.vars by the CLI).
+   *
+   * R2 lives on the platform side, not the app: the `/api/files/*` route
+   * below proxies to platform-worker `/internal/files/*` which serves a
+   * shared `APP_FILES` bucket scoped per-app via the `?scope=` query:
+   *   - `?scope=app`  → apps/<APP_NAME>/…       (per-app shared)
+   *   - `?scope=self` → apps/<APP_NAME>/users/<userId>/…  (per-user, default)
+   *
+   * Apps don't need a local R2 binding for the standard flow. If you need
+   * a wholly separate bucket, add `[[r2_buckets]]` to wrangler.toml AND a
+   * field here — but prefer the proxied path so the platform retains
+   * unified moderation / quota / cleanup hooks.
    */
+  PLATFORM_WORKER?: Fetcher
+  PLATFORM_WORKER_URL?: string
+  APP_IDENTITY_TOKEN: string
+  /**
+   * Upstream api-worker. Same pattern as PLATFORM_WORKER above —
+   * binding in prod, URL fallback in dev.
+   */
+  API_WORKER?: Fetcher
   API_WORKER_URL?: string
   AUTH_JWT_PUBLIC_KEY: string
   AUTH_JWT_ISSUER: string
@@ -93,38 +136,19 @@ interface Env extends DOBindings<typeof __DO_MANIFEST__> {
    * they are the JWT subject.
    */
   APP_OWNER_JWT: string
-  INTERNAL_STORAGE_HMAC_SECRET: string
+  /**
+   * When set to "true", the app worker exposes /api/debug/* (set-role,
+   * sql, query, records, status) by forwarding to the RecordRoom DO's
+   * debug handler. Tests need this for role elevation and state cleanup.
+   *
+   * The CLI writes this to .dev.vars on `deepspace dev`/`deepspace test`
+   * but never to production secrets, so deployed apps don't expose
+   * debug routes by default.
+   */
+  ALLOW_DEBUG_ROUTES?: string
 }
 
-type AppContext = { Bindings: Env }
-
-/**
- * Forward to the DeepSpace API worker. Prefer the `API_WORKER` service binding
- * in production. Local dev often has no binding; use `API_WORKER_URL` in
- * `.dev.vars` (written by `deepspace dev`) so integration calls can reach
- * the hosted api-worker over HTTPS. Matches `createDeepSpaceAI` transport
- * in `deepspace/worker` (`api.ts`).
- */
-function apiWorkerFetch(
-  env: { API_WORKER?: Fetcher; API_WORKER_URL?: string },
-  path: string,
-  init?: RequestInit,
-): Promise<Response> {
-  const normalized = path.startsWith('/') ? path : `/${path}`
-  if (env.API_WORKER) {
-    return env.API_WORKER.fetch(`https://api-worker${normalized}`, init)
-  }
-  const base = env.API_WORKER_URL?.replace(/\/$/, '')
-  if (base) {
-    return fetch(`${base}${normalized}`, init)
-  }
-  return Promise.reject(
-    new Error(
-      'DeepSpace API worker is not configured: set the API_WORKER service binding, ' +
-        'or API_WORKER_URL in .dev.vars (run `deepspace dev` to fill it for local work).',
-    ),
-  )
-}
+export type AppContext = { Bindings: Env }
 
 // =============================================================================
 // App
@@ -170,7 +194,7 @@ app.get('/api/auth/oauth-complete', async (c) => {
 
   if (!code) return c.redirect(appOrigin)
 
-  const res = await fetch(`${c.env.AUTH_WORKER_URL}/api/auth/exchange-code`, {
+  const res = await authWorkerFetch(c.env, '/api/auth/exchange-code', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code }),
@@ -190,14 +214,34 @@ app.get('/api/auth/oauth-complete', async (c) => {
   })
 })
 
+app.all('/api/auth/sign-out', async (c) => {
+  try {
+    await authWorkerFetch(c.env, '/api/auth/sign-out', {
+      method: c.req.method,
+      headers: c.req.raw.headers,
+      body: c.req.method !== 'GET' && c.req.method !== 'HEAD' ? c.req.raw.body : undefined,
+    })
+  } catch {
+    // Still expire the app-scoped cookie below. A network/auth-worker
+    // failure must not leave the browser immediately signed back in.
+  }
+
+  return new Response(JSON.stringify({ success: true }), {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/json',
+      'Set-Cookie': '__Secure-better-auth.session_token=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0',
+    },
+  })
+})
+
 // ---------------------------------------------------------------------------
 // Auth proxy → auth-worker (same-origin cookies)
 // ---------------------------------------------------------------------------
 
 app.all('/api/auth/*', async (c) => {
   const url = new URL(c.req.url)
-  const authUrl = new URL(url.pathname + url.search, c.env.AUTH_WORKER_URL)
-  const res = await fetch(authUrl.toString(), {
+  const res = await authWorkerFetch(c.env, url.pathname + url.search, {
     method: c.req.method,
     headers: c.req.raw.headers,
     body: c.req.method !== 'GET' && c.req.method !== 'HEAD' ? c.req.raw.body : undefined,
@@ -211,6 +255,35 @@ app.all('/api/auth/*', async (c) => {
 })
 
 // ---------------------------------------------------------------------------
+// Debug proxy → app's RecordRoom DO
+//
+// Forwards /api/debug/* (set-role, sql, query, records, user-role, status)
+// to the DO's debug handler. The DO ships these endpoints unconditionally,
+// so we gate the proxy on env.ALLOW_DEBUG_ROUTES === "true". The CLI
+// writes that env var to the SDK-managed section of .dev.vars on
+// `deepspace dev`/`deepspace test`, which is stripped on deploy —
+// production apps return 404 here by default.
+//
+// To opt /api/debug/* INTO production (admin scripts, one-off cleanup,
+// staging environments), set `ALLOW_DEBUG_ROUTES=true` in the USER
+// section of .dev.vars (below the `# --- not managed by the SDK ---`
+// divider). The CLI ships user-section values as secret_text bindings,
+// so it lands in env.ALLOW_DEBUG_ROUTES on the deployed worker.
+// The DO's debug handler has NO auth — anyone who can reach this route
+// can read and mutate any record. Turn this on deliberately.
+// ---------------------------------------------------------------------------
+
+app.all('/api/debug/*', async (c) => {
+  if (c.env.ALLOW_DEBUG_ROUTES !== 'true') {
+    return c.notFound()
+  }
+  const stub = c.env.RECORD_ROOMS.get(c.env.RECORD_ROOMS.idFromName(`app:${c.env.APP_NAME}`))
+  // Forward verbatim, preserving method, headers, body, and the full URL
+  // (the DO's debug handler dispatches on url.pathname).
+  return stub.fetch(c.req.raw)
+})
+
+// ---------------------------------------------------------------------------
 // Integrations proxy → api-worker
 // ---------------------------------------------------------------------------
 
@@ -218,11 +291,44 @@ app.get('/api/integrations', async (c) => {
   try {
     const res = await apiWorkerFetch(c.env, '/api/integrations')
     return new Response(res.body, { status: res.status, headers: res.headers })
-  } catch (e) {
-    return c.json(
-      { error: e instanceof Error ? e.message : 'Failed to fetch integration catalog' },
-      502,
+  } catch {
+    return c.json({ error: 'Failed to fetch integration catalog' }, 502)
+  }
+})
+
+// OAuth: per-user connection status. Always user-billed — must forward caller's JWT.
+app.get('/api/integrations/status', async (c) => {
+  const auth = await resolveAuth(c.req.raw, c.env)
+  if (!auth) return c.json({ error: 'Sign in required' }, 401)
+  const token = c.req.header('Authorization')?.slice(7)
+  try {
+    const res = await apiWorkerFetch(c.env, '/api/integrations/status', {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    return new Response(res.body, { status: res.status, headers: res.headers })
+  } catch {
+    return c.json({ error: 'Status proxy failed' }, 502)
+  }
+})
+
+// OAuth: disconnect a provider for the calling user. Always user-billed.
+app.delete('/api/integrations/oauth/:provider/disconnect', async (c) => {
+  const auth = await resolveAuth(c.req.raw, c.env)
+  if (!auth) return c.json({ error: 'Sign in required' }, 401)
+  const token = c.req.header('Authorization')?.slice(7)
+  const provider = c.req.param('provider')
+  try {
+    const res = await apiWorkerFetch(
+      c.env,
+      `/api/integrations/oauth/${encodeURIComponent(provider)}/disconnect`,
+      {
+        method: 'DELETE',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      },
     )
+    return new Response(res.body, { status: res.status, headers: res.headers })
+  } catch {
+    return c.json({ error: 'Disconnect proxy failed' }, 502)
   }
 })
 
@@ -263,11 +369,8 @@ app.all('/api/integrations/:name/:endpoint', async (c) => {
       body,
     })
     return new Response(res.body, { status: res.status, headers: res.headers })
-  } catch (e) {
-    return c.json(
-      { error: e instanceof Error ? e.message : 'Integration proxy failed' },
-      502,
-    )
+  } catch {
+    return c.json({ error: 'Integration proxy failed' }, 502)
   }
 })
 
@@ -275,6 +378,11 @@ app.all('/api/integrations/:name/:endpoint', async (c) => {
 // WebSocket routes
 // ---------------------------------------------------------------------------
 
+// The DO reads identity (userId, userName, userEmail, userImageUrl, role)
+// off the URL it receives and trusts it. Anything the client put on the URL
+// is stripped on every code path; identity is re-applied only from a
+// verified JWT. Three states: no token = anonymous (the SDK's
+// allowAnonymous flow), invalid token = 401, valid token = JWT identity.
 function wsRoute(
   doNamespace: (env: Env) => DurableObjectNamespace,
   extraParams?: (auth: VerifyResult) => Record<string, string>,
@@ -283,18 +391,30 @@ function wsRoute(
     const id = c.req.param('roomId') ?? c.req.param('docId') ?? c.req.param('scopeId')
     const url = new URL(c.req.url)
     const token = url.searchParams.get('token')
-    const auth = token ? (await verifyJwt(jwtConfig(c.env), token)).result : null
+
+    let auth: VerifyResult | null = null
+    if (token) {
+      auth = (await verifyJwt(jwtConfig(c.env), token)).result
+      if (!auth) return new Response('Unauthorized', { status: 401 })
+    }
 
     const doUrl = new URL(c.req.url)
+    doUrl.searchParams.delete('token')
+    for (const k of ['userId', 'userName', 'userEmail', 'userImageUrl', 'role']) {
+      doUrl.searchParams.delete(k)
+    }
+
     if (auth) {
       doUrl.searchParams.set('userId', auth.userId)
+      if (auth.claims.name) doUrl.searchParams.set('userName', auth.claims.name)
+      if (auth.claims.email) doUrl.searchParams.set('userEmail', auth.claims.email)
+      if (auth.claims.image) doUrl.searchParams.set('userImageUrl', auth.claims.image)
       if (extraParams) {
         for (const [k, v] of Object.entries(extraParams(auth))) {
           doUrl.searchParams.set(k, v)
         }
       }
     }
-    doUrl.searchParams.delete('token')
 
     const ns = doNamespace(c.env)
     const stub = ns.get(ns.idFromName(id))
@@ -302,22 +422,150 @@ function wsRoute(
   }
 }
 
-app.get('/ws/:roomId', wsRoute((env) => env.RECORD_ROOMS))
+app.get(
+  '/ws/:roomId',
+  wsRoute((env) => env.RECORD_ROOMS),
+)
 
-app.get('/ws/yjs/:docId', wsRoute((env) => env.YJS_ROOMS, () => ({ role: 'member' })))
+type DocsYjsRole = 'admin' | 'member' | 'viewer'
 
-app.get('/ws/canvas/:docId', wsRoute((env) => env.CANVAS_ROOMS, () => ({ role: 'member' })))
+interface DocumentRecordForAccess {
+  ownerId?: string
+  collaborators?: string
+  editors?: string
+}
 
-app.get('/ws/media/:roomId', wsRoute((env) => env.MEDIA_ROOMS, () => ({ role: 'member' })))
+type DocumentAccessLookup =
+  | { kind: 'found'; doc: DocumentRecordForAccess }
+  | { kind: 'not-docs-room' }
+  | { kind: 'error' }
 
-app.get('/ws/presence/:scopeId', wsRoute(
-  (env) => env.PRESENCE_ROOMS,
-  (auth) => ({
-    ...(auth.claims.name ? { userName: auth.claims.name } : {}),
-    ...(auth.claims.email ? { userEmail: auth.claims.email } : {}),
-    ...(auth.claims.image ? { userImageUrl: auth.claims.image } : {}),
-  }),
-))
+function parseAccessList(raw: string | undefined): string[] {
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+async function getDocumentForAccess(
+  env: Env,
+  docId: string,
+): Promise<DocumentAccessLookup> {
+  const stub = env.RECORD_ROOMS.get(env.RECORD_ROOMS.idFromName(`app:${env.APP_NAME}`))
+  try {
+    const res = await stub.fetch(
+      new Request('https://internal/api/tools/execute', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': env.OWNER_USER_ID,
+          'X-App-Action': 'true',
+        },
+        body: JSON.stringify({
+          tool: 'records.get',
+          params: { collection: 'documents', recordId: docId },
+        }),
+      }),
+    )
+    const json = (await res.json()) as {
+      success?: boolean
+      error?: string
+      data?: { record?: { data?: DocumentRecordForAccess } }
+    }
+    if (json.success && json.data?.record?.data) {
+      return { kind: 'found', doc: json.data.record.data }
+    }
+    if (
+      json.error === 'Record not found' ||
+      json.error?.startsWith('Schema not registered for collection: documents')
+    ) {
+      return { kind: 'not-docs-room' }
+    }
+    return { kind: 'error' }
+  } catch {
+    return { kind: 'error' }
+  }
+}
+
+async function resolveDocsYjsRole(
+  env: Env,
+  docId: string,
+  userId: string,
+): Promise<DocsYjsRole | null> {
+  const lookup = await getDocumentForAccess(env, docId)
+  if (lookup.kind === 'not-docs-room') return 'member'
+  if (lookup.kind === 'error') return null
+  const { doc } = lookup
+  if (doc.ownerId === userId || userId === env.OWNER_USER_ID) return 'admin'
+
+  const editors = parseAccessList(doc.editors)
+  if (editors.includes(userId)) return 'member'
+
+  const collaborators = parseAccessList(doc.collaborators)
+  if (collaborators.includes(userId)) return 'viewer'
+
+  return null
+}
+
+app.get('/ws/yjs/:docId', async (c) => {
+  const docId = c.req.param('docId')
+  const url = new URL(c.req.url)
+  const token = url.searchParams.get('token')
+  const auth = token ? (await verifyJwt(jwtConfig(c.env), token)).result : null
+  if (!auth) return new Response('Unauthorized', { status: 401 })
+
+  const role = await resolveDocsYjsRole(c.env, docId, auth.userId)
+  if (!role) return new Response('Forbidden', { status: 403 })
+
+  const doUrl = new URL(c.req.url)
+  doUrl.searchParams.set('userId', auth.userId)
+  doUrl.searchParams.set('role', role)
+  doUrl.searchParams.delete('token')
+
+  const stub = c.env.YJS_ROOMS.get(c.env.YJS_ROOMS.idFromName(docId))
+  return stub.fetch(new Request(doUrl.toString(), c.req.raw))
+})
+
+app.get(
+  '/ws/canvas/:docId',
+  wsRoute(
+    (env) => env.CANVAS_ROOMS,
+    () => ({ role: 'member' }),
+  ),
+)
+
+app.get(
+  '/ws/presence/:scopeId',
+  wsRoute(
+    (env) => env.PRESENCE_ROOMS,
+    (auth) => ({
+      ...(auth.claims.name ? { userName: auth.claims.name } : {}),
+      ...(auth.claims.email ? { userEmail: auth.claims.email } : {}),
+      ...(auth.claims.image ? { userImageUrl: auth.claims.image } : {}),
+    }),
+  ),
+)
+
+app.get(
+  '/ws/cron/:roomId',
+  wsRoute(
+    (env) => env.CRON_ROOMS,
+    // Authenticated users get write access (trigger / pause / resume).
+    // Anonymous connections fall through with no role and become viewers,
+    // which CronRoom enforces as read-only. Apps that want stricter access
+    // (e.g. owner-only) should replace this with an inline handler that
+    // resolves role from app state — see the /ws/yjs route for the pattern.
+    () => ({ role: 'member' }),
+  ),
+)
+
+app.get(
+  '/ws/jobs/:roomId',
+  wsRoute((env) => env.JOB_ROOMS),
+)
 
 // ---------------------------------------------------------------------------
 // Server actions
@@ -332,61 +580,63 @@ app.post('/api/actions/:name', async (c) => {
   const params = await c.req.json<Record<string, unknown>>()
   const callerJwt = c.req.header('Authorization')!.slice(7)
   const tools = createActionTools(c.env, auth.userId, callerJwt)
-  const result = await action({ userId: auth.userId, params, tools })
+  const result = await action({ userId: auth.userId, params, tools, env: c.env, callerJwt })
   return c.json(result as unknown as Record<string, unknown>)
+})
+
+// ---------------------------------------------------------------------------
+// Instagram post extraction (public)
+//
+// DeepSpace has no Instagram integration, so we replicate the original
+// HyperFoodie backend service here: fetch the public post page server-side
+// (no CORS limit) with a crawler user-agent and parse caption/author/image
+// from the OG tags. Public — anonymous users can import recipes.
+// ---------------------------------------------------------------------------
+
+app.post('/api/instagram/extract', async (c) => {
+  let url: string
+  try {
+    ;({ url } = await c.req.json<{ url: string }>())
+  } catch {
+    return c.json({ error: 'Expected JSON body { url }' }, 400)
+  }
+  if (!url || typeof url !== 'string') {
+    return c.json({ error: 'Missing Instagram URL' }, 400)
+  }
+  try {
+    const post = await extractInstagramPost(url)
+    return c.json(post)
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : 'Instagram extraction failed' }, 502)
+  }
 })
 
 // ---------------------------------------------------------------------------
 // AI chat — multi-turn tool-use via Vercel AI SDK + DeepSpace proxy
 // ---------------------------------------------------------------------------
 
-app.post('/api/ai/chat', async (c) => {
-  const auth = await resolveAuth(c.req.raw, c.env)
-  if (!auth) return c.json({ error: 'Unauthorized' }, 401)
-
-  const { messages } = await c.req.json<{ messages: Array<{ role: string; content: string }> }>()
-  if (!Array.isArray(messages) || messages.length === 0) {
-    return c.json({ error: 'messages array is required' }, 400)
-  }
-
-  const jwt = c.req.header('Authorization')!.slice(7)
-
-  const anthropic = createDeepSpaceAI(c.env, 'anthropic', { authToken: jwt })
-
-  // Read-only tools that execute against the app's RecordRoom DO
-  const scopeId = `app:${c.env.APP_NAME}`
-  const tools = buildReadOnlyTools(async (toolName, params) => {
-    const doId = c.env.RECORD_ROOMS.idFromName(scopeId)
-    const stub = c.env.RECORD_ROOMS.get(doId)
-    const res = await stub.fetch(new Request('https://internal/api/tools/execute', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-user-id': auth.userId },
-      body: JSON.stringify({ tool: toolName, params }),
-    }))
-    return res.json()
-  })
-
-  const result = streamText({
-    model: anthropic('claude-sonnet-4-20250514'),
-    system: buildSystemPrompt(c.env.APP_NAME, schemas),
-    messages,
-    tools,
-    maxSteps: 5,
-    onError: ({ error }) => {
-      console.error('[ai-chat] streamText error:', error)
-    },
-  })
-
-  return result.toDataStreamResponse({
-    getErrorMessage: (error) => {
-      console.error('[ai-chat] response error:', error)
-      return error instanceof Error ? error.message : String(error)
-    },
-  })
-})
+// Routes implementation lives in `src/ai/chat-routes.ts` to keep this file
+// focused on app-level wiring. `resolveAuth` is passed in to avoid a runtime
+// circular import (chat-routes imports `Env`/`AppContext` as types only).
+registerAiChatRoutes(app, resolveAuth)
 
 // ---------------------------------------------------------------------------
 // Scoped R2 files → platform-worker
+//
+// The app has no local R2 binding by design; the platform-worker holds a
+// shared `APP_FILES` bucket and scopes keys per-app via the `?scope=`
+// query string:
+//
+//   POST   /api/files/upload?scope=app    → uploads under apps/<APP_NAME>/
+//   POST   /api/files/upload              → uploads under apps/<APP_NAME>/users/<userId>/
+//   GET    /api/files                     → list (same scoping)
+//   GET    /api/files/<key>               → public read (no auth)
+//   DELETE /api/files/<key>               → delete (auth required, scope-checked)
+//
+// Use `?scope=app` for content that belongs to the app as a whole (library
+// preview images, AI-generated assets, etc.). Use the default user scope
+// for per-user uploads (avatars, project assets). All write paths require
+// a signed user JWT; reads are public.
 // ---------------------------------------------------------------------------
 
 app.all('/api/files/*', async (c) => {
@@ -398,11 +648,17 @@ app.all('/api/files/*', async (c) => {
   platformUrl.pathname = url.pathname.replace('/api/files', '/internal/files')
 
   const headers = new Headers(c.req.raw.headers)
+  // Strip any caller-supplied identity before re-asserting from the verified
+  // JWT. platform-worker trusts `x-user-id` (gated by the HMAC'd app-identity
+  // token) to scope `?scope=self` keys, so leaking a spoofed header here would
+  // let an unauthenticated browser read another user's files.
+  headers.delete('x-user-id')
   headers.set('x-app-identity-token', c.env.APP_IDENTITY_TOKEN)
   headers.set('x-app-name', c.env.APP_NAME)
   if (userId) headers.set('x-user-id', userId)
 
-  const resp = await c.env.PLATFORM_WORKER.fetch(
+  const resp = await platformWorkerFetch(
+    c.env,
     new Request(platformUrl.toString(), {
       method: c.req.method,
       headers,
@@ -428,20 +684,80 @@ app.all('/api/files/*', async (c) => {
 })
 
 // ---------------------------------------------------------------------------
-// Internal cron (HMAC-authenticated)
+// /_deepspace/* — same-origin proxy to api-worker for authenticated SDK
+// hooks. Attaches APP_IDENTITY_TOKEN + APP_NAME so the browser never sees
+// the platform secret. Every request requires a signed user JWT.
+//
+// SECURITY: exact (method, path) allowlist — not a prefix match. A prefix
+// match leaks deploy/CLI surfaces like POST /api/subscriptions/sync into the
+// browser context, where an XSS or compromised user session can become a
+// confused deputy. Adding a new browser hook in the SDK requires explicitly
+// extending the BROWSER_PROXY_ROUTES tuple below.
 // ---------------------------------------------------------------------------
 
-app.post('/internal/cron', async (c) => {
-  const body = await c.req.text()
-  const valid = await verifyInternalSignature({
-    secret: c.env.INTERNAL_STORAGE_HMAC_SECRET,
-    payload: buildInternalPayload(body),
-    signature: c.req.header('x-internal-signature') ?? '',
-    timestamp: c.req.header('x-internal-timestamp') ?? '',
+interface ProxyRoute {
+  method: string
+  path: string
+  /** Skip the user-JWT gate. Default false. Pricing tables are public. */
+  publicRead?: boolean
+  /** Inject `?appName=...` (from env) into the forwarded URL. Default false. */
+  injectAppName?: boolean
+}
+
+const BROWSER_PROXY_ROUTES: ReadonlyArray<ProxyRoute> = [
+  // useSubscription — read state, subscribe, manage billing.
+  { method: 'GET',  path: '/_deepspace/subscriptions/me' },
+  { method: 'POST', path: '/_deepspace/subscriptions/checkout' },
+  { method: 'POST', path: '/_deepspace/subscriptions/portal' },
+  // useCheckout (one-time charges)
+  { method: 'POST', path: '/_deepspace/charges/create' },
+  { method: 'GET',  path: '/_deepspace/charges/me' },
+]
+
+app.all('/_deepspace/*', async (c) => {
+  const url = new URL(c.req.url)
+  const method = c.req.method
+  const route = BROWSER_PROXY_ROUTES.find(
+    (r) => r.method === method && r.path === url.pathname,
+  )
+  if (!route) {
+    return c.json({ error: 'not_found' }, 404)
+  }
+
+  // Public-read routes (pricing tables) skip the JWT gate. Everything else
+  // requires a signed-in user.
+  let auth: Awaited<ReturnType<typeof resolveAuth>> | null = null
+  if (!route.publicRead) {
+    auth = await resolveAuth(c.req.raw, c.env)
+    if (!auth?.userId) return c.json({ error: 'unauthorized' }, 401)
+  }
+
+  // Inject appName into the query string when the route needs it. We can't
+  // rely on the HMAC header for routes the platform serves without HMAC
+  // (e.g. /plans is public). Use URLSearchParams.set so we OVERWRITE any
+  // caller-supplied appName — otherwise a request to
+  // `/_deepspace/subscriptions/plans?appName=other_app` would forward a
+  // duplicate-key query string and the platform would pick whichever value
+  // its parser sees first.
+  const forwardedParams = new URLSearchParams(url.search)
+  if (route.injectAppName) {
+    forwardedParams.set('appName', c.env.APP_NAME)
+  }
+  const queryString = forwardedParams.toString()
+  const apiPath =
+    url.pathname.replace('/_deepspace/', '/api/') + (queryString ? `?${queryString}` : '')
+
+  const headers = new Headers(c.req.raw.headers)
+  headers.delete('x-user-id')
+  headers.set('x-app-identity-token', c.env.APP_IDENTITY_TOKEN)
+  headers.set('x-app-name', c.env.APP_NAME)
+  if (auth?.userId) headers.set('x-user-id', auth.userId)
+
+  return apiWorkerFetch(c.env, apiPath, {
+    method,
+    headers,
+    body: ['GET', 'HEAD'].includes(method) ? undefined : c.req.raw.body,
   })
-  if (!valid) return c.json({ error: 'Forbidden' }, 403)
-  await handleCron(JSON.parse(body))
-  return c.json({ ok: true })
 })
 
 // ---------------------------------------------------------------------------
@@ -463,24 +779,31 @@ app.get('*', async (c) => {
 // =============================================================================
 
 function createActionTools(env: Env, userId: string, callerJwt: string): ActionTools {
-  const scopeId = `app:${env.APP_NAME}`
+  const stub = env.RECORD_ROOMS.get(env.RECORD_ROOMS.idFromName(`app:${env.APP_NAME}`))
 
-  async function execTool(tool: string, params: Record<string, unknown>): Promise<ActionResult> {
-    const doId = env.RECORD_ROOMS.idFromName(scopeId)
-    const stub = env.RECORD_ROOMS.get(doId)
+  // Internal helper — DO returns `ActionResult<unknown>`. Callers below
+  // cast to the precisely-typed result for each operation. The cast is
+  // safe because the wire shape is set by the SDK's tools-api handler.
+  async function execTool<TData>(
+    tool: string,
+    params: Record<string, unknown>,
+  ): Promise<ActionResult<TData>> {
     const res = await stub.fetch(new Request('https://internal/api/tools/execute', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-user-id': userId,
-        'x-app-action': 'true',
+        'X-User-Id': userId,
+        'X-App-Action': 'true',
       },
       body: JSON.stringify({ tool, params }),
     }))
-    return res.json() as Promise<ActionResult>
+    return res.json() as Promise<ActionResult<TData>>
   }
 
-  async function callIntegration(endpoint: string, data?: unknown): Promise<ActionResult> {
+  async function callIntegration<T>(
+    endpoint: string,
+    data?: unknown,
+  ): Promise<ActionResult<T>> {
     const integrationName = endpoint.split('/')[0]
     const billingMode = integrations[integrationName]?.billing ?? 'developer'
 
@@ -494,18 +817,21 @@ function createActionTools(env: Env, userId: string, callerJwt: string): ActionT
         'Content-Type': 'application/json',
         Authorization: `Bearer ${jwt}`,
       },
-      body: data != null ? JSON.stringify(data) : undefined,
+      body: JSON.stringify(data ?? {}),
     })
-    return res.json() as Promise<ActionResult>
+    return res.json() as Promise<ActionResult<T>>
   }
 
   return {
-    create: (sid, collection, data) => execTool('records.create', { scopeId: sid, collection, data }),
-    update: (sid, collection, recordId, data) => execTool('records.update', { scopeId: sid, collection, recordId, data }),
-    remove: (sid, collection, recordId) => execTool('records.delete', { scopeId: sid, collection, recordId }),
-    get: (sid, collection, recordId) => execTool('records.get', { scopeId: sid, collection, recordId }),
-    query: (sid, collection, options) => execTool('records.query', { scopeId: sid, collection, ...options }),
+    create: (collection, data, recordId) =>
+      execTool('records.create', { collection, data, recordId }),
+    update: (collection, recordId, data) =>
+      execTool('records.update', { collection, recordId, data }),
+    remove: (collection, recordId) => execTool('records.delete', { collection, recordId }),
+    get: (collection, recordId) => execTool('records.get', { collection, recordId }),
+    query: (collection, options) => execTool('records.query', { collection, ...options }),
     integration: callIntegration,
+    registerUser: (opts) => execTool('users.register', { ...opts }),
   }
 }
 

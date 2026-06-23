@@ -43,6 +43,8 @@ export { CardGrid, GridCard } from './CardGrid'
 /* Feedback */
 export { Alert, AlertTitle, AlertDescription } from './Alert'
 export { ToastProvider, useToast } from './Toast'
+export { ErrorScreen, decodeReactError } from './ErrorBoundary'
+export type { ErrorScreenProps, DecodedReactError } from './ErrorBoundary'
 export {
   EmptyState, EmptyItems, EmptySearch, EmptyDocuments, EmptyProjects, EmptyTeam, EmptyError,
 } from './EmptyState'

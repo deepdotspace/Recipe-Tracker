@@ -28,6 +28,7 @@ test.describe('Smoke tests', () => {
     await page.goto('/')
     await waitForApp(page)
     await expect(page.getByTestId('nav-sign-in-button')).toBeVisible()
+    await expect(page.getByTestId('nav-user-name')).toHaveCount(0)
   })
 
   test('unknown route shows 404', async ({ page }) => {

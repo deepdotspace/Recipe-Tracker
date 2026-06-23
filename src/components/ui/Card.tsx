@@ -8,8 +8,13 @@ const Card = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <div
     ref={ref}
+    // Literal `shadow-[…]` rather than the `shadow-card` token: Tailwind
+    // v4's @theme directive bakes the slate baseline value into the
+    // compiled `shadow-card` utility class, so [data-theme] overrides
+    // don't fully cancel the heavy halo on every Card across themes.
+    // See docs/platform/theming-shadows.md for the full rationale.
     className={cn(
-      'relative rounded-2xl border border-white/[0.08] bg-white/[0.04] text-card-foreground shadow-[0_8px_32px_rgba(0,0,0,0.2)]',
+      'relative rounded-2xl border border-border bg-card text-card-foreground shadow-[0_1px_2px_0_rgba(0,0,0,0.04)]',
       className
     )}
     {...props}

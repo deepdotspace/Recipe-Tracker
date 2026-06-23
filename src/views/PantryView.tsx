@@ -5,6 +5,7 @@
 import { useState } from 'react'
 import { useQuery, useMutations } from 'deepspace'
 import { Button, Card } from '../components/ui'
+import { useAuthGate } from '../hooks/useAuthGate'
 
 interface PantryRecord {
   recordId: string
@@ -27,27 +28,24 @@ const CATEGORIES = [
 export default function PantryPage() {
   const { records: pantryItems } = useQuery('pantry') as { records: PantryRecord[] }
   const { create, remove } = useMutations('pantry')
-  
+  const { guard, authModal } = useAuthGate()
+
   const [newIngredient, setNewIngredient] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('other')
   const [searchTerm, setSearchTerm] = useState('')
   const [filterCategory, setFilterCategory] = useState<string | null>(null)
-  
-  const handleAddIngredient = async () => {
+
+  const handleAddIngredient = () => guard(async () => {
     if (!newIngredient.trim()) return
-    
     await create({
       ingredient: newIngredient.trim().toLowerCase(),
       addedAt: new Date().toISOString(),
       category: selectedCategory,
     })
-    
     setNewIngredient('')
-  }
-  
-  const handleRemoveIngredient = async (recordId: string) => {
-    await remove(recordId)
-  }
+  })
+
+  const handleRemoveIngredient = (recordId: string) => guard(() => remove(recordId))
   
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -190,7 +188,7 @@ export default function PantryPage() {
                       <span className="text-content capitalize">{item.data.ingredient}</span>
                       <button
                         onClick={() => handleRemoveIngredient(item.recordId)}
-                        className="opacity-0 group-hover:opacity-100 transition-opacity text-content-muted hover:text-error"
+                        className="opacity-0 group-hover:opacity-100 transition-opacity text-content-muted hover:text-danger"
                         title="Remove from pantry"
                       >
                         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -205,6 +203,8 @@ export default function PantryPage() {
           })}
         </div>
       )}
+
+      {authModal}
     </div>
   )
 }

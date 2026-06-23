@@ -6,11 +6,13 @@ import { components, hooks, utils } from '@generouted/react-router/client'
 export type Path =
   | `*`
   | `/`
+  | `/api-status`
   | `/grocery`
   | `/home`
   | `/pantry`
   | `/recipes`
   | `/recipes/:id`
+  | `/settings`
 
 export type Params = {
   '/*': { '*': string }

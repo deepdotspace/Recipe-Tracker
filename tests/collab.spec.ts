@@ -1,23 +1,95 @@
-import { test, expect } from '@playwright/test'
-import { createTestUsers } from './helpers/auth'
+/**
+ * Multi-user collaboration spec — verifies two users sign in into
+ * separate browser contexts and the app distinguishes them.
+ *
+ * Pre-create the test accounts once (counted against your 10-cap):
+ *   npx deepspace test-accounts create --email collab-a@deepspace.test --password TestPass123! --name "Collab A"
+ *   npx deepspace test-accounts create --email collab-b@deepspace.test --password TestPass123! --name "Collab B"
+ *
+ * The `users` fixture handles sign-in caching (per-account storageState
+ * persisted to `~/.deepspace/playwright-states/`), context creation, and
+ * cleanup. No need to manage browser contexts manually.
+ */
+import { test, expect } from 'deepspace/testing'
 
-async function waitForApp(page: import('@playwright/test').Page) {
-  await page.waitForSelector('[data-testid="app-navigation"]', { timeout: 15000 })
-}
+test('two users render with their own names', async ({ users }) => {
+  const [a, b] = await users(['Collab A', 'Collab B'])
 
-test.describe('Multi-user collaboration', () => {
-  test('two users are recognized as different users', async ({ browser }) => {
-    const users = await createTestUsers(browser, 2)
+  await Promise.all([a.page.goto('/'), b.page.goto('/')])
 
-    try {
-      await waitForApp(users[0].page)
-      await waitForApp(users[1].page)
+  await expect(a.page.getByTestId('app-navigation')).toBeVisible({ timeout: 15_000 })
+  await expect(b.page.getByTestId('app-navigation')).toBeVisible({ timeout: 15_000 })
 
-      // Both should show signed-in state with their names
-      await expect(users[0].page.getByTestId('nav-user-name')).toContainText('User 1')
-      await expect(users[1].page.getByTestId('nav-user-name')).toContainText('User 2')
-    } finally {
-      for (const u of users) await u.context.close()
+  await expect(a.page.getByTestId('nav-user-name')).toContainText('Collab A')
+  await expect(b.page.getByTestId('nav-user-name')).toContainText('Collab B')
+})
+
+test('API status page renders loading success and error states', async ({ users }) => {
+  const [user] = await users(['Collab A'])
+  let shouldFail = false
+  let requestCount = 0
+
+  await user.page.route('**/api/integrations', async (route) => {
+    requestCount += 1
+    if (shouldFail) {
+      await route.fulfill({
+        status: 502,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: false, error: 'Catalog unavailable' }),
+      })
+      return
     }
+
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true, data: { integrations: { openai: {}, wikipedia: {} } } }),
+    })
   })
+
+  await user.page.goto('/api-status')
+  await expect(user.page.getByText('Loading integration catalog...')).toBeVisible()
+  await expect(user.page.getByText('Integration catalog ready')).toBeVisible()
+  await expect(user.page.getByText('2 integrations available.')).toBeVisible()
+
+  shouldFail = true
+  await user.page.getByRole('button', { name: 'Refresh' }).click()
+  await expect(user.page.getByText('Catalog unavailable')).toBeVisible()
+  await expect(user.page.getByText('Showing the last loaded catalog')).toBeVisible()
+  await expect(user.page.getByText('Integration catalog ready')).toBeVisible()
+
+  const urlAfterFailure = user.page.url()
+  const requestsAfterFailure = requestCount
+  await user.page.getByRole('button', { name: 'Refresh' }).click()
+  await expect.poll(() => requestCount).toBeGreaterThan(requestsAfterFailure)
+  expect(user.page.url()).toBe(urlAfterFailure)
+})
+
+test('API status page shows local retry after first-load API failure', async ({ users }) => {
+  const [user] = await users(['Collab A'])
+  let requestCount = 0
+
+  await user.page.route('**/api/integrations', async (route) => {
+    requestCount += 1
+    await route.fulfill({
+      status: 502,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: false, error: 'Catalog unavailable' }),
+    })
+  })
+
+  await user.page.goto('/api-status')
+  await expect(user.page.getByText('Loading integration catalog...')).toBeVisible()
+  await expect(user.page.getByText('Could not load API data')).toBeVisible()
+  await expect(user.page.getByText('Retried 1 time automatically.')).toBeVisible()
+
+  const retryButton = user.page.getByRole('button', { name: 'Retry' })
+  await expect(retryButton).toBeVisible()
+
+  const urlAfterFailure = user.page.url()
+  const requestsAfterFailure = requestCount
+  await retryButton.click()
+  await expect.poll(() => requestCount).toBeGreaterThan(requestsAfterFailure)
+  expect(user.page.url()).toBe(urlAfterFailure)
 })

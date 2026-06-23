@@ -1,37 +1,45 @@
 @import "tailwindcss" source(none);
+@import "./themes.css";
 
 /* Scan local source + SDK components for Tailwind class usage */
 @source "./**/*.{ts,tsx}";
 @source "../node_modules/deepspace/dist/**/*.js";
 
 /*
- * Theme configuration — shadcn/ui-compatible token system.
- * Pick a palette and replace this block to retheme the app.
+ * Theming — pure shadcn/ui CSS variables with [data-theme] selectors.
+ *
+ * The @theme block below holds the default theme (slate). All other themes
+ * live in `themes.css` as `[data-theme="<id>"]` override blocks. Switching
+ * themes = changing the data-theme attribute on <html> in index.html. No
+ * JS, no FOUC.
+ *
+ * Status colors (success, warning, info) are intentionally NOT themed —
+ * they stay consistent across every preset.
  */
 @theme {
-  /* shadcn core tokens */
-  --color-background: #0a0f1a;
-  --color-foreground: #f1f5f9;
-  --color-card: #0f172a;
-  --color-card-foreground: #f1f5f9;
-  --color-popover: #0f172a;
-  --color-popover-foreground: #f1f5f9;
+  /* shadcn core tokens — slate (default): neutral gray on near-black, indigo accent */
+  --color-background: #0a0a0a;
+  --color-foreground: #e8eaed;
+  --color-card: #161616;
+  --color-card-foreground: #e8eaed;
+  --color-popover: #161616;
+  --color-popover-foreground: #e8eaed;
   --color-primary: #818cf8;
   --color-primary-foreground: #ffffff;
-  --color-secondary: #1e293b;
-  --color-secondary-foreground: #f1f5f9;
-  --color-muted: #1e293b;
-  --color-muted-foreground: #94a3b8;
-  --color-accent: #1e293b;
-  --color-accent-foreground: #f1f5f9;
+  --color-secondary: #1e1e1e;
+  --color-secondary-foreground: #e8eaed;
+  --color-muted: #1e1e1e;
+  --color-muted-foreground: #9ca3af;
+  --color-accent: #262626;
+  --color-accent-foreground: #e8eaed;
   --color-destructive: #ef4444;
   --color-destructive-foreground: #ffffff;
-  --color-border: rgba(51, 65, 85, 0.5);
-  --color-input: rgba(51, 65, 85, 0.5);
-  --color-ring: rgba(129, 140, 248, 0.5);
+  --color-border: rgba(60, 64, 67, 0.6);
+  --color-input: rgba(60, 64, 67, 0.6);
+  --color-ring: #818cf8;
   --radius: 0.5rem;
 
-  /* Extended status colors */
+  /* Status colors — constant across all themes */
   --color-success: #10b981;
   --color-success-foreground: #ffffff;
   --color-warning: #f59e0b;
@@ -39,13 +47,28 @@
   --color-info: #3b82f6;
   --color-info-foreground: #ffffff;
 
-  /* Shadows */
-  --shadow-card: 0 8px 32px rgba(0, 0, 0, 0.3);
-  --shadow-card-hover: 0 12px 40px rgba(0, 0, 0, 0.4);
-  --shadow-glow-violet: 0 0 24px rgba(129, 140, 248, 0.3);
-  --shadow-glow-cyan: 0 0 24px rgba(6, 182, 212, 0.3);
-  --shadow-glow-emerald: 0 0 24px rgba(16, 185, 129, 0.3);
-  --shadow-glow-amber: 0 0 24px rgba(245, 158, 11, 0.3);
+  /*
+   * Shadows — slate (default). Each theme in themes.css tunes these.
+   *
+   * Toned down 2026-05: previous values were 8px/12px offset with
+   * 32px/40px blur which read as a heavy halo under every Card on
+   * the page. New values are Linear/Stripe-style: barely-there at
+   * rest, slightly more present on hover.
+   *
+   * IMPORTANT: starter components (`Card`, `Dialog`, `CardGrid`,
+   * `Navigation`, `Toast`) intentionally use literal shadow values
+   * via `shadow-[…]` arbitrary-value classes, NOT the
+   * `shadow-card` / `shadow-card-hover` token classes Tailwind v4
+   * generates from this @theme block. Why: Tailwind's @theme directive
+   * compiles these tokens into the utility-class definitions at build
+   * time, and runtime [data-theme] overrides don't always cancel the
+   * baked baseline cleanly — apps switching themes were getting the
+   * slate value carried forward on the compiled `shadow-card` class.
+   * Sidestepping the token system in starter components is the
+   * deterministic fix. See docs/platform/theming-shadows.md.
+   */
+  --shadow-card: 0 1px 2px 0 rgba(0, 0, 0, 0.12);
+  --shadow-card-hover: 0 2px 8px 0 rgba(0, 0, 0, 0.16);
 
   /* Animations */
   --animate-pulse-glow: pulse-glow 2s ease-in-out infinite;
@@ -54,16 +77,19 @@
   --color-surface: var(--color-background);
   --color-surface-elevated: var(--color-card);
   --color-surface-overlay: var(--color-muted);
-  --color-surface-input: rgba(30, 41, 59, 0.6);
+  /* Derived from the active theme tokens so legacy aliases follow any
+     [data-theme] (they used to be hardcoded slate/indigo and leaked cool
+     colors into warm themes like `foodie`). */
+  --color-surface-input: color-mix(in srgb, var(--color-secondary) 70%, var(--color-card));
   --color-content: var(--color-foreground);
   --color-content-secondary: var(--color-muted-foreground);
-  --color-content-muted: #64748b;
-  --color-content-inverse: #0f172a;
-  --color-border-strong: rgba(71, 85, 105, 0.5);
+  --color-content-muted: color-mix(in srgb, var(--color-muted-foreground) 80%, transparent);
+  --color-content-inverse: var(--color-card);
+  --color-border-strong: color-mix(in srgb, var(--color-border) 65%, var(--color-foreground));
   --color-border-focus: var(--color-ring);
-  --color-primary-hover: #6d7bf5;
-  --color-primary-muted: rgba(129, 140, 248, 0.2);
-  --color-primary-border: rgba(129, 140, 248, 0.3);
+  --color-primary-hover: color-mix(in srgb, var(--color-primary) 88%, white);
+  --color-primary-muted: color-mix(in srgb, var(--color-primary) 15%, transparent);
+  --color-primary-border: color-mix(in srgb, var(--color-primary) 30%, transparent);
   --color-danger: var(--color-destructive);
   --color-danger-muted: rgba(239, 68, 68, 0.2);
   --color-danger-border: rgba(239, 68, 68, 0.4);
@@ -74,6 +100,8 @@
   --color-info-muted: rgba(59, 130, 246, 0.2);
   --color-info-border: rgba(59, 130, 246, 0.4);
 }
+
+/* Theme override blocks live in `themes.css` — imported above. */
 
 /*
  * Animation keyframes for shadcn components.
@@ -125,6 +153,12 @@
  * Custom base styles — must be in @layer base so utility classes can override.
  */
 @layer base {
+  html {
+    /* Default to dark for native form controls (calendar icons, scrollbars).
+     * Light themes opt into `color-scheme: light` in themes.css. */
+    color-scheme: dark;
+  }
+
   html, body, #root {
     min-height: 100vh;
     background-color: var(--color-background);
@@ -165,22 +199,38 @@
     color: var(--color-primary-foreground);
   }
 
-  /* Focus states for accessibility */
-  *:focus-visible {
-    outline-style: solid;
-    outline-width: 2px;
-    outline-offset: 2px;
-    outline-color: var(--color-primary);
-  }
+  /*
+   * Focus indication is intentionally NOT applied app-wide via a
+   * `*:focus-visible` rule. Doing so paints a colored outline onto
+   * every focusable element on the page — including programmatically
+   * focusable containers like Radix DismissableLayer wrappers,
+   * dialog overlays, and any element with `tabindex={-1}` used for
+   * scroll containment. The result reads as "the entire panel /
+   * dialog is selected" the moment a child button is clicked.
+   *
+   * Per-component focus indicators (e.g. shadcn's
+   * `focus-visible:ring-1` on Button, `focus-visible:border-ring` on
+   * Input / Textarea / Select) are sufficient for keyboard
+   * accessibility and don't bleed onto containers.
+   *
+   * If you DO need a global indicator for very keyboard-heavy apps,
+   * scope it tightly — e.g. only to interactive elements:
+   *
+   *   a:focus-visible,
+   *   button:focus-visible,
+   *   [role="button"]:focus-visible,
+   *   input:focus-visible,
+   *   select:focus-visible,
+   *   textarea:focus-visible {
+   *     outline: 2px solid var(--color-primary);
+   *     outline-offset: 2px;
+   *   }
+   *
+   * — never `*`.
+   */
 
   /* Prevent 300ms tap delay on mobile */
   a, button, [role="button"], input, select, textarea {
     touch-action: manipulation;
-  }
-
-  /* Form input calendar icons (dark mode invert) */
-  input[type="datetime-local"]::-webkit-calendar-picker-indicator,
-  input[type="date"]::-webkit-calendar-picker-indicator {
-    filter: invert(0.7);
   }
 }

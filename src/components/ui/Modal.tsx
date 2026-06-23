@@ -44,7 +44,7 @@ export function Modal({
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose() }}>
-      <DialogContent className={cn(sizes[size], 'flex flex-col max-h-[85vh]', className)}>
+      <DialogContent aria-describedby={undefined} className={cn(sizes[size], 'flex flex-col max-h-[85vh]', className)}>
         {children}
       </DialogContent>
     </Dialog>
@@ -113,8 +113,12 @@ interface ModalBodyProps {
 }
 
 function ModalBody({ children, className = '' }: ModalBodyProps): JSX.Element {
+  // px-1 -mx-1 leaves room for focus rings on inputs (which extend 1px
+  // outside their box) without shrinking the visual content area —
+  // the negative margin compensates for the padding so children still
+  // align with Header / Footer.
   return (
-    <div className={cn('flex-1 overflow-y-auto py-4', className)}>
+    <div className={cn('flex-1 overflow-y-auto -mx-1 px-1 py-4', className)}>
       {children}
     </div>
   )

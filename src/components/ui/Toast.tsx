@@ -217,31 +217,17 @@ export function ToastProvider({
 // ToastItem
 // ============================================================================
 
+/**
+ * Per-type visual config. Body uses the neutral popover surface — the type
+ * is conveyed by a thin colored left-edge accent and the icon glyph alone,
+ * not by tinting the title text or stamping a chunky colored block behind
+ * the icon. Cleaner read; doesn't compete with the page underneath.
+ */
 const TOAST_CONFIG = {
-  success: {
-    Icon: CheckCircleIcon,
-    border: 'border-success-border',
-    text: 'text-success',
-    iconBg: 'bg-success-muted',
-  },
-  error: {
-    Icon: AlertCircleIcon,
-    border: 'border-danger-border',
-    text: 'text-destructive',
-    iconBg: 'bg-danger-muted',
-  },
-  warning: {
-    Icon: AlertTriangleIcon,
-    border: 'border-warning-border',
-    text: 'text-warning',
-    iconBg: 'bg-warning-muted',
-  },
-  info: {
-    Icon: InfoIcon,
-    border: 'border-info-border',
-    text: 'text-info',
-    iconBg: 'bg-info-muted',
-  },
+  success: { Icon: CheckCircleIcon, accent: 'bg-success', icon: 'text-success' },
+  error:   { Icon: AlertCircleIcon, accent: 'bg-destructive', icon: 'text-destructive' },
+  warning: { Icon: AlertTriangleIcon, accent: 'bg-warning', icon: 'text-warning' },
+  info:    { Icon: InfoIcon, accent: 'bg-info', icon: 'text-info' },
 } as const
 
 interface ToastItemProps {
@@ -250,10 +236,10 @@ interface ToastItemProps {
 }
 
 function ToastItem({ toast, onDismiss }: ToastItemProps): React.ReactElement {
-  const { Icon, border, text, iconBg } = TOAST_CONFIG[toast.type]
+  const { Icon, accent, icon } = TOAST_CONFIG[toast.type]
   const [exiting, setExiting] = useState(false)
 
-  // Animate out before removing
+  // Animate out before removing.
   useEffect(() => {
     if (exiting) {
       const timer = setTimeout(onDismiss, 150)
@@ -264,9 +250,9 @@ function ToastItem({ toast, onDismiss }: ToastItemProps): React.ReactElement {
   return (
     <div
       className={`
-        flex items-start gap-3 w-80 p-4 rounded-xl border shadow-card
-        bg-card backdrop-blur-sm
-        ${border} ${text}
+        relative flex items-start gap-2.5 min-w-[260px] max-w-[360px]
+        overflow-hidden rounded-lg border border-border bg-popover
+        text-popover-foreground pl-3.5 pr-2 py-2.5 shadow-lg
         ${exiting
           ? 'animate-out fade-out-0 slide-out-to-right-2 duration-150'
           : 'animate-in fade-in-0 slide-in-from-right-2 duration-200'
@@ -274,23 +260,23 @@ function ToastItem({ toast, onDismiss }: ToastItemProps): React.ReactElement {
       `}
       role="alert"
     >
-      <span className={`shrink-0 p-1.5 rounded-lg ${iconBg}`}>
-        <Icon className="w-5 h-5" />
-      </span>
+      {/* Colored left-edge accent — the only chrome that reflects the type. */}
+      <span className={`absolute inset-y-0 left-0 w-[3px] ${accent}`} aria-hidden />
+      <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${icon}`} />
       <div className="flex-1 min-w-0">
-        <p className="font-medium text-foreground">{toast.title}</p>
+        <p className="text-[13px] font-medium leading-tight">{toast.title}</p>
         {toast.description && (
-          <p className="text-sm text-muted-foreground mt-0.5">
+          <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
             {toast.description}
           </p>
         )}
       </div>
       <button
         onClick={() => setExiting(true)}
-        className="shrink-0 p-1 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+        className="-mr-0.5 shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         aria-label="Dismiss"
       >
-        <CloseIcon className="w-4 h-4" />
+        <CloseIcon className="h-3.5 w-3.5" />
       </button>
     </div>
   )

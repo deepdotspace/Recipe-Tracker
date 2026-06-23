@@ -1,11 +1,15 @@
 /** App name — replaced by the CLI during scaffolding */
-export const APP_NAME = 'my-third-app'
+export const APP_NAME = 'recipe-tracker'
 
 /** Primary scope ID for the app's RecordRoom DO */
 export const SCOPE_ID = `app:${APP_NAME}`
 
 /** Roles and display config — imported from SDK (single source of truth) */
 export { ROLES, ROLE_CONFIG, type Role } from 'deepspace'
+
+// ---------------------------------------------------------------------------
+// Recipe domain constants
+// ---------------------------------------------------------------------------
 
 export type MealType = 'breakfast' | 'dinner' | 'dessert' | 'snack' | 'other'
 

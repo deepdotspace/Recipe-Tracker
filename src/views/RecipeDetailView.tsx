@@ -7,6 +7,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery, useMutations, useRecordContext } from 'deepspace'
 import { Button, buttonVariants, cn, useToast } from '../components/ui'
 import { MEAL_TYPE_OPTIONS, MEAL_TYPE_CONFIG, type MealType } from '../constants'
+import { useAuthGate } from '../hooks/useAuthGate'
 
 interface Recipe {
   title: string
@@ -76,10 +77,26 @@ export default function RecipeDetailPage() {
   const [addingGroceries, setAddingGroceries] = useState(false)
 
   const { records: recipes } = useQuery('recipes') as { records: RecipeRecord[] }
-  const { put, remove } = useMutations('recipes')
+  const { put: rawPut, remove: rawRemove } = useMutations('recipes')
 
   const { records: groceryItems } = useQuery('groceryList') as { records: GroceryRecord[] }
-  const { createConfirmed: addToGroceryConfirmed } = useMutations('groceryList')
+  const { createConfirmed: rawAddToGrocery } = useMutations('groceryList')
+
+  const { guard, authModal } = useAuthGate()
+
+  // Every write is gated behind sign-in; reads stay open for anonymous browsing.
+  const put = useCallback(async (recordId: string, recordData: Recipe) => {
+    if (!guard()) return
+    await rawPut(recordId, recordData)
+  }, [guard, rawPut])
+  const remove = useCallback(async (recordId: string) => {
+    if (!guard()) return
+    await rawRemove(recordId)
+  }, [guard, rawRemove])
+  const addToGroceryConfirmed = useCallback(async (recordData: GroceryItem) => {
+    if (!guard()) return
+    await rawAddToGrocery(recordData)
+  }, [guard, rawAddToGrocery])
   
   const recipe = recipes?.find(r => r.recordId === id)
   
@@ -262,7 +279,7 @@ export default function RecipeDetailPage() {
   
   if (!recipe) {
     return (
-      <div className="h-full bg-surface flex items-center justify-center">
+      <div className="flex min-h-full items-center justify-center">
         <div className="text-center">
           <div className="w-16 h-16 mx-auto mb-4 bg-surface-elevated rounded-2xl flex items-center justify-center">
             <svg className="w-8 h-8 text-content-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -281,7 +298,7 @@ export default function RecipeDetailPage() {
   const { data } = recipe
   
   return (
-    <div className="h-full bg-surface overflow-y-auto">
+    <div className="min-h-full">
       <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Back Link */}
         <Link
@@ -729,6 +746,8 @@ export default function RecipeDetailPage() {
           </button>
         </div>
       </div>
+
+      {authModal}
     </div>
   )
 }
