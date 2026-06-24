@@ -4,7 +4,7 @@
 
 import { useState } from 'react'
 import { useQuery, useMutations } from 'deepspace'
-import { Button, Card } from '../components/ui'
+import { Button, Card, Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../components/ui'
 import { useAuthGate } from '../hooks/useAuthGate'
 
 interface PantryRecord {
@@ -92,17 +92,18 @@ export default function PantryPage() {
             placeholder="e.g., eggs, milk, chicken breast..."
             className="flex-1 px-3 py-2 bg-surface-overlay border border-border rounded-lg text-content placeholder-content-muted focus:outline-none focus:ring-2 focus:ring-primary"
           />
-          <select
-            value={selectedCategory}
-            onChange={(e) => setSelectedCategory(e.target.value)}
-            className="px-3 py-2 bg-surface-overlay border border-border rounded-lg text-content focus:outline-none focus:ring-2 focus:ring-primary"
-          >
-            {CATEGORIES.map(cat => (
-              <option key={cat.value} value={cat.value}>
-                {cat.emoji} {cat.label}
-              </option>
-            ))}
-          </select>
+          <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+            <SelectTrigger className="sm:w-44">
+              <SelectValue placeholder="Category" />
+            </SelectTrigger>
+            <SelectContent>
+              {CATEGORIES.map(cat => (
+                <SelectItem key={cat.value} value={cat.value}>
+                  {cat.emoji} {cat.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Button onClick={handleAddIngredient} disabled={!newIngredient.trim()}>
             Add
           </Button>

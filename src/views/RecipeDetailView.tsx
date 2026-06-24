@@ -8,6 +8,7 @@ import { useQuery, useMutations, useRecordContext } from 'deepspace'
 import { Button, buttonVariants, cn, useToast } from '../components/ui'
 import { MEAL_TYPE_OPTIONS, MEAL_TYPE_CONFIG, type MealType } from '../constants'
 import { useAuthGate } from '../hooks/useAuthGate'
+import { useConfirm } from '../hooks/useConfirm'
 
 interface Recipe {
   title: string
@@ -83,16 +84,13 @@ export default function RecipeDetailPage() {
   const { createConfirmed: rawAddToGrocery } = useMutations('groceryList')
 
   const { guard, authModal } = useAuthGate()
+  const { confirm, confirmModal } = useConfirm()
 
   // Every write is gated behind sign-in; reads stay open for anonymous browsing.
   const put = useCallback(async (recordId: string, recordData: Recipe) => {
     if (!guard()) return
     await rawPut(recordId, recordData)
   }, [guard, rawPut])
-  const remove = useCallback(async (recordId: string) => {
-    if (!guard()) return
-    await rawRemove(recordId)
-  }, [guard, rawRemove])
   const addToGroceryConfirmed = useCallback(async (recordData: GroceryItem) => {
     if (!guard()) return
     await rawAddToGrocery(recordData)
@@ -269,13 +267,21 @@ export default function RecipeDetailPage() {
     })
   }, [recipe, put])
   
-  const deleteRecipe = useCallback(async () => {
+  const deleteRecipe = useCallback(() => {
     if (!recipe) return
-    if (confirm('Are you sure you want to delete this recipe?')) {
-      await remove(recipe.recordId)
-      navigate('/recipes')
-    }
-  }, [recipe, remove, navigate])
+    if (!guard()) return
+    confirm(
+      {
+        title: 'Delete recipe?',
+        description: 'This permanently removes the recipe from your list. This can’t be undone.',
+        confirmText: 'Delete',
+      },
+      async () => {
+        await rawRemove(recipe.recordId)
+        navigate('/recipes')
+      },
+    )
+  }, [recipe, guard, confirm, rawRemove, navigate])
   
   if (!recipe) {
     return (
@@ -748,6 +754,7 @@ export default function RecipeDetailPage() {
       </div>
 
       {authModal}
+      {confirmModal}
     </div>
   )
 }

@@ -8,6 +8,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { Button } from '../components/ui'
 import { MEAL_TYPE_OPTIONS, MEAL_TYPE_CONFIG, type MealType } from '../constants'
 import { useAuthGate } from '../hooks/useAuthGate'
+import { useConfirm } from '../hooks/useConfirm'
 
 interface Recipe {
   title: string
@@ -82,14 +83,22 @@ export default function RecipesPage() {
   const { records: recipes } = useQuery('recipes') as { records: RecipeRecord[] }
   const { put, remove } = useMutations('recipes')
   const { guard, authModal } = useAuthGate()
+  const { confirm, confirmModal } = useConfirm()
 
   const toggleStar = useCallback((record: RecipeRecord) => guard(() =>
     put(record.recordId, { ...record.data, starred: !record.data.starred }),
   ), [guard, put])
 
   const deleteRecipe = useCallback((recordId: string) => guard(() => {
-    if (confirm('Are you sure you want to delete this recipe?')) return remove(recordId)
-  }), [guard, remove])
+    confirm(
+      {
+        title: 'Delete recipe?',
+        description: 'This permanently removes the recipe from your list. This can’t be undone.',
+        confirmText: 'Delete',
+      },
+      () => remove(recordId),
+    )
+  }), [guard, confirm, remove])
 
   const filteredRecipes = useMemo(() => {
     if (!recipes) return []
@@ -312,6 +321,7 @@ export default function RecipesPage() {
       )}
 
       {authModal}
+      {confirmModal}
     </div>
   )
 }
