@@ -19,8 +19,9 @@ export interface NavItem {
 }
 
 export const nav: NavItem[] = [
-  { path: '/home', label: 'Add Recipe' },
-  { path: '/recipes', label: 'My Recipes' },
-  { path: '/grocery', label: 'Grocery List' },
+  { path: '/add', label: 'Add' },
+  { path: '/recipes', label: 'Recipes' },
+  { path: '/discover', label: 'Discover' },
+  { path: '/grocery', label: 'Grocery' },
   // ── Features add nav items below this line ──
 ]

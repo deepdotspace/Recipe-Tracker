@@ -28,6 +28,10 @@ export const recipesSchema: CollectionSchema = {
     { name: 'recipeSourceUrl', storage: 'text', interpretation: 'plain' },
     { name: 'mealType', storage: 'text', interpretation: 'plain' },
     { name: 'keyIngredients', storage: 'text', interpretation: { kind: 'json' } },
+    // AI-estimated nutrition, per serving (approximate)
+    { name: 'calories', storage: 'number', interpretation: 'plain' },
+    { name: 'protein', storage: 'number', interpretation: 'plain' },
+    { name: 'servings', storage: 'number', interpretation: 'plain' },
   ],
   ownerField: 'ownerId',
   permissions: stdPerms,
@@ -43,6 +47,26 @@ export const pantrySchema: CollectionSchema = {
   ],
   ownerField: 'ownerId',
   permissions: stdPerms,
+}
+
+/**
+ * One row per successful link extraction — used to meter monthly extraction
+ * quotas per plan (see src/plan-limits.ts). Rows are never edited, only
+ * created; the quota check counts rows with `at` in the current month.
+ */
+export const extractionLogSchema: CollectionSchema = {
+  name: 'extractionLog',
+  columns: [
+    { name: 'ownerId', storage: 'text', interpretation: 'plain', userBound: true, immutable: true },
+    { name: 'at', storage: 'text', interpretation: 'plain' },
+    { name: 'sourceUrl', storage: 'text', interpretation: 'plain' },
+  ],
+  ownerField: 'ownerId',
+  permissions: {
+    viewer: { read: 'own', create: true, update: false, delete: false },
+    member: { read: 'own', create: true, update: false, delete: false },
+    admin: { read: true, create: true, update: true, delete: true },
+  },
 }
 
 export const groceryListSchema: CollectionSchema = {

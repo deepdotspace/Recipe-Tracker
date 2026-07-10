@@ -5,6 +5,7 @@
 import { useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutations, useRecordContext } from 'deepspace'
+import { Check, X, Plus, ClipboardCheck } from 'lucide-react'
 import { Button, useToast } from '../components/ui'
 import { isGroceryChecked } from '../utils/groceryChecked'
 import { useAuthGate } from '../hooks/useAuthGate'
@@ -117,127 +118,122 @@ export default function GroceryListPage() {
   const progress = total > 0 ? Math.round((checkedCount / total) * 100) : 0
 
   return (
-    <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
-      {/* Header card */}
-      <div className="relative overflow-hidden rounded-3xl border border-border bg-card/80 p-6 shadow-card backdrop-blur-sm">
-        <div className="pointer-events-none absolute -right-16 -top-16 h-44 w-44 rounded-full bg-primary/10 blur-2xl" />
-        <div className="relative flex items-start justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/15 text-primary">
-              <svg className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-              </svg>
-            </span>
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight text-foreground">Grocery List</h1>
-              <p className="text-sm text-muted-foreground">
-                {uncheckedCount} item{uncheckedCount !== 1 ? 's' : ''} to get
-                {checkedCount > 0 && ` · ${checkedCount} in the cart`}
-              </p>
-            </div>
-          </div>
+    <div className="mx-auto max-w-[680px] px-7 pb-[72px] pt-10">
+      {/* Header */}
+      <header className="mb-7">
+        <p className="text-xs font-bold uppercase tracking-[0.14em] text-primary-deep">
+          Ready to shop
+        </p>
+        <h1 className="mt-2 text-[36px] font-extrabold leading-tight tracking-[-0.03em] text-ink">
+          Grocery list
+        </h1>
+        <div className="mt-1 flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+          <p className="text-[14.5px] text-muted-foreground">
+            {uncheckedCount} item{uncheckedCount !== 1 ? 's' : ''} to get · {checkedCount} already in the cart
+          </p>
           {total > 0 && (
-            <div className="flex flex-col items-end gap-2">
-              <div className="flex gap-1.5">
-                {checkedCount > 0 && (
-                  <Button variant="ghost" size="sm" onClick={clearChecked}>Clear checked</Button>
-                )}
-                <Button variant="ghost" size="sm" onClick={clearAll} className="text-danger hover:text-danger">Clear all</Button>
-              </div>
+            <div className="flex items-center gap-1">
+              {checkedCount > 0 && (
+                <Button variant="ghost" size="sm" onClick={clearChecked}>Clear checked</Button>
+              )}
+              <Button variant="ghost" size="sm" onClick={clearAll} className="text-destructive hover:text-destructive">Clear all</Button>
             </div>
           )}
         </div>
+      </header>
 
-        {total > 0 && (
-          <div className="relative mt-5">
-            <div className="h-2 overflow-hidden rounded-full bg-secondary">
-              <div
-                className="h-full rounded-full bg-primary transition-all duration-500"
-                style={{ width: `${progress}%` }}
-              />
-            </div>
-            <p className="mt-1.5 text-right text-xs text-muted-foreground">{progress}% gathered</p>
-          </div>
-        )}
+      {/* Progress card */}
+      <div className="rounded-[20px] border border-border bg-card p-5 shadow-[0_12px_26px_-18px_rgba(61,35,20,0.4)]">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-bold text-secondary-foreground">{progress}% gathered</span>
+          <span className="text-[13px] text-muted-2">{checkedCount} of {total}</span>
+        </div>
+        <div className="mt-3 h-[9px] w-full overflow-hidden rounded-full bg-photo-tile">
+          <div
+            className="h-full rounded-full bg-success transition-all duration-200"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
 
         {/* Add item */}
-        <div className="relative mt-5 flex gap-2">
+        <div className="mt-5 flex gap-2.5">
           <input
             type="text"
             value={newItem}
             onChange={(e) => setNewItem(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && addManualItem()}
             placeholder="Add an item — e.g. ripe avocados"
-            className="flex-1 rounded-full border border-border bg-secondary/50 px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground transition-all focus:border-primary focus:bg-card focus:outline-none focus:ring-2 focus:ring-primary/20"
+            className="h-[46px] flex-1 rounded-[13px] border border-input bg-surface-soft px-4 text-[14.5px] text-body placeholder:text-faint transition-colors duration-150 focus:border-primary focus:outline-none"
           />
-          <Button onClick={addManualItem} disabled={!newItem.trim()} className="rounded-full px-5">Add</Button>
+          <Button
+            onClick={addManualItem}
+            disabled={!newItem.trim()}
+            className="h-[46px] rounded-[13px] px-5 shadow-[0_10px_20px_-8px_rgba(226,87,11,0.7)]"
+          >
+            <Plus />
+            Add
+          </Button>
         </div>
       </div>
 
       {/* Empty state */}
       {total === 0 && (
-        <div className="mt-6 rounded-3xl border border-dashed border-border bg-card/50 p-12 text-center">
-          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-            <svg className="h-8 w-8" fill="none" stroke="currentColor" strokeWidth={1.6} viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
-            </svg>
+        <div className="mt-6 rounded-[20px] border border-dashed border-border bg-surface-soft p-12 text-center">
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-note text-primary-deep">
+            <ClipboardCheck className="h-8 w-8" strokeWidth={1.6} />
           </div>
-          <h3 className="mb-1.5 text-lg font-semibold text-foreground">Your cart is empty</h3>
-          <p className="mx-auto mb-5 max-w-xs text-sm text-muted-foreground">
+          <h3 className="mb-1.5 text-lg font-semibold text-ink">Your cart is empty</h3>
+          <p className="mx-auto mb-5 max-w-xs text-sm text-body-soft">
             Add items above, or pull ingredients straight from a saved recipe.
           </p>
           <Link to="/recipes">
-            <Button variant="secondary" className="rounded-full">Browse recipes</Button>
+            <Button variant="secondary" className="rounded-[13px]">Browse recipes</Button>
           </Link>
         </div>
       )}
 
       {/* Grouped list */}
-      <div className="mt-6 space-y-5">
+      <div className="mt-8 space-y-6">
         {Object.entries(groupedByRecipe).map(([recipeName, recipeItems]) => {
           const remaining = recipeItems.filter((i) => !isGroceryChecked(i.data.checked)).length
           return (
             <div key={recipeName}>
-              <div className="mb-2 flex items-center gap-2 px-1">
-                <h2 className="text-xs font-semibold uppercase tracking-wide text-content-secondary">
+              <div className="mb-2.5 flex items-center gap-3">
+                <h2 className="text-xs font-bold uppercase tracking-[0.1em] text-primary-deep">
                   {recipeName === 'Manual' ? 'Added by you' : recipeName}
                 </h2>
-                <span className="text-xs text-muted-foreground">· {remaining} left</span>
+                <span className="h-px flex-1 bg-border" />
+                <span className="text-[12.5px] text-muted-2">{remaining} left</span>
               </div>
 
-              <div className="overflow-hidden rounded-2xl border border-border bg-card/80 shadow-card backdrop-blur-sm">
+              <div className="overflow-hidden rounded-[16px] border border-border bg-card">
                 {recipeItems.map((item, idx) => {
                   const done = isGroceryChecked(item.data.checked)
                   return (
                     <div
                       key={item.recordId}
-                      className={`group flex items-center gap-3 px-4 py-3 transition-colors ${idx > 0 ? 'border-t border-border' : ''} ${done ? 'bg-secondary/40' : 'hover:bg-secondary/30'}`}
+                      className={`group flex items-center gap-3 px-4 py-3 transition-colors duration-150 ${idx > 0 ? 'border-t border-[#f4ece0]' : ''} ${done ? 'bg-[#fbf4e9]' : ''}`}
                     >
                       <button
                         type="button"
                         onClick={() => toggleChecked(item)}
-                        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition-all ${done ? 'border-success bg-success text-white' : 'border-border hover:border-primary'}`}
+                        aria-label={done ? 'Uncheck item' : 'Check off item'}
+                        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition-all duration-150 ${done ? 'border-success bg-success text-white' : 'border-[#dcc9b0] bg-transparent'}`}
                       >
-                        {done && (
-                          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={3} viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                          </svg>
-                        )}
+                        {done && <Check className="h-3.5 w-3.5" strokeWidth={3} />}
                       </button>
 
-                      <span className={`flex-1 text-sm ${done ? 'text-muted-foreground line-through' : 'text-foreground'}`}>
+                      <span className={`flex-1 text-[14.5px] ${done ? 'text-muted-2 line-through' : 'text-body'}`}>
                         {item.data.ingredient}
                       </span>
 
                       <button
                         type="button"
                         onClick={() => removeItem(item.recordId)}
-                        className="shrink-0 rounded-lg p-1.5 text-muted-foreground opacity-0 transition-all hover:bg-danger/10 hover:text-danger group-hover:opacity-100"
+                        className="shrink-0 text-faint opacity-0 transition-all duration-150 hover:text-destructive group-hover:opacity-100"
                         aria-label="Remove item"
                       >
-                        <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
+                        <X className="h-4 w-4" />
                       </button>
                     </div>
                   )

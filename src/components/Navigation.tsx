@@ -1,39 +1,34 @@
 /**
- * Navigation — a floating, segmented header.
+ * App navigation — Recipe Box handoff spec ("Global chrome › App nav").
  *
- * Brand chip · centered segmented tabs (icon + label, icon-only on mobile) ·
- * account cluster — all inside one rounded, blurred bar that floats inset from
- * the screen edges so the layout feels soft rather than boxed-in.
+ * Sticky warm-cream bar: brand mark (ChefHat on primary square) · centered
+ * segmented pill nav on a cream track · Upgrade link + account chip. The
+ * grocery tab carries an unchecked-items badge. Brand returns to landing (/).
  */
 
-import { useState, useEffect, type ReactNode } from 'react'
+import { useState, useEffect, type ComponentType } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth, AuthOverlay, useUser, signOut, useQuery } from 'deepspace'
-import { APP_NAME, type Role } from '../constants'
+import {
+  ChefHat, Plus, BookOpen, ClipboardCheck, Compass, LogOut, CreditCard,
+  type LucideProps,
+} from 'lucide-react'
+import { APP_DISPLAY_NAME, type Role } from '../constants'
 import { nav } from '../nav'
 import { isGroceryChecked } from '../utils/groceryChecked'
+import { effectiveTier } from '../plan-limits'
+import { useSubscriptionSafe } from '../hooks/subscription-context'
 
 interface GroceryRecord {
   recordId: string
   data: { checked?: unknown }
 }
 
-const NAV_ICONS: Record<string, ReactNode> = {
-  '/home': (
-    <svg className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-    </svg>
-  ),
-  '/recipes': (
-    <svg className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-    </svg>
-  ),
-  '/grocery': (
-    <svg className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-    </svg>
-  ),
+const NAV_ICONS: Record<string, ComponentType<LucideProps>> = {
+  '/add': Plus,
+  '/recipes': BookOpen,
+  '/discover': Compass,
+  '/grocery': ClipboardCheck,
 }
 
 export default function Navigation() {
@@ -42,6 +37,9 @@ export default function Navigation() {
   const location = useLocation()
   const [showAuthModal, setShowAuthModal] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
+
+  const sub = useSubscriptionSafe()
+  const onFreePlan = !sub.isLoading && effectiveTier(sub) === 'free'
 
   const { records: groceryItems } = useQuery('groceryList') as { records: GroceryRecord[] }
   const uncheckedCount = groceryItems?.filter((i) => !isGroceryChecked(i.data?.checked)).length ?? 0
@@ -57,31 +55,31 @@ export default function Navigation() {
     return item.roles.includes(userRole as Role)
   })
 
+  // Recipes stays highlighted on /recipes/:id (handoff "Active nav state").
   const isActive = (path: string) =>
-    path === '/home' ? location.pathname === '/home' : location.pathname.startsWith(path)
+    path === '/add' ? location.pathname === '/add' : location.pathname.startsWith(path)
 
   return (
-    <header className="px-3 pt-3 sm:px-4">
+    <header className="sticky top-0 z-40 border-b border-border bg-background/85 backdrop-blur-[12px]">
       <nav
         data-testid="app-navigation"
-        className="mx-auto flex h-14 max-w-5xl items-center justify-between gap-2 rounded-2xl border border-border bg-card/70 pl-2 pr-2 shadow-card backdrop-blur-xl sm:rounded-full sm:pl-2.5 sm:pr-2.5"
+        className="mx-auto flex h-[66px] max-w-[1160px] items-center justify-between gap-3 px-7 max-sm:px-4"
       >
-        {/* Brand */}
-        <Link to="/home" className="flex shrink-0 items-center gap-2">
-          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm">
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
-            </svg>
+        {/* Brand — returns to landing */}
+        <Link to="/" className="flex shrink-0 items-center gap-2.5">
+          <span className="flex h-[38px] w-[38px] items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-[0_6px_14px_-4px_rgba(226,87,11,0.6)]">
+            <ChefHat className="h-5 w-5" strokeWidth={2} />
           </span>
-          <span className="hidden text-sm font-bold tracking-tight text-foreground md:block">
-            {APP_NAME}
+          <span className="hidden text-xl font-extrabold tracking-[-0.02em] text-ink md:block">
+            {APP_DISPLAY_NAME}
           </span>
         </Link>
 
-        {/* Segmented tabs */}
-        <div className="flex items-center gap-1 rounded-full bg-secondary/70 p-1">
+        {/* Segmented pill nav */}
+        <div className="flex items-center rounded-full bg-cream p-1">
           {visibleNav.map((item) => {
             const active = isActive(item.path)
+            const Icon = NAV_ICONS[item.path]
             const badge = item.path === '/grocery' && uncheckedCount > 0 ? uncheckedCount : null
             return (
               <Link
@@ -89,16 +87,16 @@ export default function Navigation() {
                 to={item.path}
                 aria-current={active ? 'page' : undefined}
                 title={item.label}
-                className={`relative flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium transition-all ${
+                className={`flex h-9 items-center gap-2 rounded-full px-4 text-[13.5px] font-semibold transition-colors duration-150 max-sm:px-3 ${
                   active
-                    ? 'bg-card text-primary shadow-sm'
-                    : 'text-content-secondary hover:text-content'
+                    ? 'bg-card text-primary shadow-[0_2px_6px_rgba(61,35,20,0.12)]'
+                    : 'text-[#8a6a4a] hover:text-ink'
                 }`}
               >
-                <span className={active ? 'text-primary' : ''}>{NAV_ICONS[item.path]}</span>
+                {Icon && <Icon className="h-[15px] w-[15px] shrink-0" strokeWidth={2} />}
                 <span className="hidden sm:inline">{item.label}</span>
                 {badge !== null && (
-                  <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold leading-none text-primary-foreground">
+                  <span className="flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-primary px-1 text-[10.5px] font-bold leading-none text-primary-foreground">
                     {badge > 9 ? '9+' : badge}
                   </span>
                 )}
@@ -107,40 +105,54 @@ export default function Navigation() {
           })}
         </div>
 
-        {/* Account */}
-        <div className="flex shrink-0 items-center gap-2">
+        {/* Account cluster */}
+        <div className="flex shrink-0 items-center gap-3">
+          {isSignedIn && onFreePlan && (
+            <Link
+              to="/pricing"
+              className="hidden text-[13.5px] font-semibold text-primary-deep transition-colors duration-150 hover:text-primary sm:block"
+            >
+              Upgrade
+            </Link>
+          )}
           {isSignedIn && user ? (
             <div className="relative">
               <button
                 onClick={() => setUserMenuOpen((prev) => !prev)}
-                className="flex items-center gap-2 rounded-full border border-border bg-card/60 py-1 pl-1 pr-2.5 transition-colors hover:bg-card"
+                className="flex items-center gap-2 rounded-full bg-cream py-1 pl-1 pr-3 transition-colors duration-150 hover:bg-muted"
               >
-                <span className="flex h-7 w-7 items-center justify-center overflow-hidden rounded-full bg-primary/15 text-xs font-semibold text-primary">
+                <span className="flex h-[30px] w-[30px] items-center justify-center overflow-hidden rounded-full bg-primary text-[13px] font-bold text-primary-foreground">
                   {user.imageUrl ? (
-                    <img src={user.imageUrl} alt="" className="h-7 w-7 rounded-full object-cover" />
+                    <img src={user.imageUrl} alt="" className="h-[30px] w-[30px] rounded-full object-cover" />
                   ) : (
                     (user.name?.[0] ?? user.email?.[0] ?? '?').toUpperCase()
                   )}
                 </span>
-                <span data-testid="nav-user-name" className="hidden max-w-[110px] truncate text-sm text-content-secondary sm:inline">
+                <span data-testid="nav-user-name" className="hidden max-w-[110px] truncate text-[13.5px] font-semibold text-secondary-foreground sm:inline">
                   {user.name || user.email}
                 </span>
               </button>
               {userMenuOpen && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setUserMenuOpen(false)} />
-                  <div className="absolute right-0 top-[calc(100%+8px)] z-50 w-52 overflow-hidden rounded-2xl border border-border bg-card shadow-card-hover">
+                  <div className="absolute right-0 top-[calc(100%+8px)] z-50 w-52 overflow-hidden rounded-2xl border border-border bg-card shadow-[0_12px_26px_-18px_rgba(61,35,20,0.4)]">
                     <div className="border-b border-border px-3 py-2.5">
-                      <div className="truncate text-sm font-semibold text-foreground">{user.name || 'Signed in'}</div>
+                      <div className="truncate text-sm font-bold text-ink">{user.name || 'Signed in'}</div>
                       <div className="truncate text-xs text-muted-foreground">{user.email}</div>
                     </div>
+                    <Link
+                      to="/pricing"
+                      onClick={() => setUserMenuOpen(false)}
+                      className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-body-soft transition-colors duration-150 hover:bg-accent hover:text-ink"
+                    >
+                      <CreditCard className="h-4 w-4" strokeWidth={2} />
+                      Billing &amp; plans
+                    </Link>
                     <button
                       onClick={() => { setUserMenuOpen(false); signOut() }}
-                      className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-content-secondary transition-colors hover:bg-secondary hover:text-content"
+                      className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-body-soft transition-colors duration-150 hover:bg-accent hover:text-ink"
                     >
-                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                      </svg>
+                      <LogOut className="h-4 w-4" strokeWidth={2} />
                       Sign out
                     </button>
                   </div>
@@ -151,7 +163,7 @@ export default function Navigation() {
             <button
               data-testid="nav-sign-in-button"
               onClick={() => setShowAuthModal(true)}
-              className="rounded-full bg-primary px-4 py-1.5 text-sm font-semibold text-primary-foreground shadow-sm transition-opacity hover:opacity-90"
+              className="h-[38px] rounded-xl bg-primary px-4 text-sm font-bold text-primary-foreground shadow-[0_10px_20px_-8px_rgba(226,87,11,0.7)] transition-colors duration-150 hover:bg-primary-deep"
             >
               Sign In
             </button>

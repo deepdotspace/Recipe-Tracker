@@ -6,58 +6,39 @@
  */
 
 import { Suspense, type ReactNode } from 'react'
-import { Outlet, useRouteError } from 'react-router-dom'
+import { Outlet, useLocation, useRouteError } from 'react-router-dom'
 import { DeepSpaceAuthProvider, useAuthStatus } from 'deepspace'
 import { RecordProvider, RecordScope } from 'deepspace'
 import { ErrorScreen, ToastProvider } from '../components/ui'
 import Navigation from '../components/Navigation'
+import { SubscriptionBoundary } from '../hooks/subscription-context'
 import { APP_NAME, SCOPE_ID } from '../constants'
 import { schemas } from '../schemas'
 
 export default function App() {
+  // The landing page at `/` owns the whole viewport — no app chrome on top.
+  const { pathname } = useLocation()
+  const isLanding = pathname === '/'
+
   return (
     <ToastProvider>
       <DeepSpaceAuthProvider>
         <AuthBoot>
           {/* data-testid="app-root" is the canonical "app shell mounted" hook
               every test relies on. Don't rename without updating templates/tests. */}
-          <div data-testid="app-root" className="relative flex h-screen flex-col overflow-hidden bg-background text-foreground">
-            <KitchenBackdrop />
-            <div className="relative z-10 flex h-full min-h-0 flex-col">
-              <Navigation />
-              <main className="flex-1 overflow-y-auto min-h-0">
-                <Suspense fallback={<div className="flex items-center justify-center h-full text-muted-foreground">Loading...</div>}>
-                  <Outlet />
-                </Suspense>
-              </main>
-            </div>
+          {/* Flat warm-cream canvas per the Recipe Box handoff — the old
+              gradient-bloom backdrop was a deliberate removal. */}
+          <div data-testid="app-root" className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
+            {!isLanding && <Navigation />}
+            <main className="flex-1 overflow-y-auto min-h-0">
+              <Suspense fallback={<div className="flex items-center justify-center h-full text-muted-foreground">Loading...</div>}>
+                <Outlet />
+              </Suspense>
+            </main>
           </div>
         </AuthBoot>
       </DeepSpaceAuthProvider>
     </ToastProvider>
-  )
-}
-
-/**
- * Warm, organic page backdrop — soft primary blooms + a faint dot grid.
- * Lives behind every page so the layout never reads as a flat rigid sheet.
- */
-function KitchenBackdrop() {
-  return (
-    <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
-      <div className="absolute -left-32 -top-40 h-[34rem] w-[34rem] rounded-full bg-primary/20 blur-[120px]" />
-      <div className="absolute -right-24 top-1/3 h-[28rem] w-[28rem] rounded-full bg-warning/15 blur-[120px]" />
-      <div className="absolute -bottom-40 left-1/4 h-[30rem] w-[30rem] rounded-full bg-primary/10 blur-[130px]" />
-      <div
-        className="absolute inset-0 opacity-[0.035]"
-        style={{
-          backgroundImage:
-            'radial-gradient(circle at 1px 1px, currentColor 1px, transparent 0)',
-          backgroundSize: '28px 28px',
-          color: 'var(--color-foreground)',
-        }}
-      />
-    </div>
   )
 }
 
@@ -87,7 +68,7 @@ function AuthBoot({ children }: { children: ReactNode }) {
   return (
     <RecordProvider allowAnonymous>
       <RecordScope roomId={SCOPE_ID} schemas={schemas} appId={APP_NAME}>
-        {children}
+        <SubscriptionBoundary>{children}</SubscriptionBoundary>
       </RecordScope>
     </RecordProvider>
   )

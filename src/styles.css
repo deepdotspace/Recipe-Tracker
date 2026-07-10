@@ -39,6 +39,25 @@
   --color-ring: #818cf8;
   --radius: 0.5rem;
 
+  /*
+   * Recipe Box handoff tokens (design_handoff_recipe_box/README.md).
+   * Canonical values live here so Tailwind generates the utilities
+   * (bg-cream, text-body-soft, bg-tag, text-primary-deep, …); the
+   * foodie theme block in themes.css is the active look.
+   */
+  --color-cream: #f6ead9;        /* nav pill track, avatar chip, eyebrow badge */
+  --color-tag: #f7ede0;          /* ingredient / key-ingredient chips */
+  --color-note: #fbf1e6;         /* notes panel, ingredient add-button bg */
+  --color-photo-tile: #f4e7d5;   /* image placeholder bg */
+  --color-ink: #2e1c10;          /* headings, dark CTA band, active chips */
+  --color-body: #33261a;         /* body copy on cards */
+  --color-body-soft: #6a533d;    /* secondary paragraphs */
+  --color-muted-2: #a08a72;      /* fainter meta, author names */
+  --color-faint: #b09a82;        /* placeholder icons */
+  --color-primary-deep: #b8451f; /* eyebrows, link hover */
+  --color-star: #e0900d;         /* favorited star fill */
+  --color-surface-soft: #fffaf2; /* inputs, feature cards, table footers */
+
   /* Status colors — constant across all themes */
   --color-success: #10b981;
   --color-success-foreground: #ffffff;
@@ -166,11 +185,11 @@
   }
 
   body {
-    font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    font-size: 14px;
+    font-size: 15px;
     color: var(--color-foreground);
   }
 

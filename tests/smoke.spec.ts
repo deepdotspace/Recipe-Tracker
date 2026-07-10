@@ -11,21 +11,30 @@ async function waitForApp(page: import('@playwright/test').Page) {
 }
 
 test.describe('Smoke tests', () => {
-  test('app loads without JS errors', async ({ page }) => {
+  test('landing page renders at / without app chrome', async ({ page }) => {
     const errors = captureConsoleErrors(page)
     await page.goto('/')
+    await expect(page.getByRole('heading', { name: 'Every recipe you love, in one tidy place.' })).toBeVisible()
+    // The landing page owns the viewport — no global navigation bar.
+    await expect(page.getByTestId('app-navigation')).toHaveCount(0)
+    expect(errors).toEqual([])
+  })
+
+  test('app loads without JS errors', async ({ page }) => {
+    const errors = captureConsoleErrors(page)
+    await page.goto('/add')
     await waitForApp(page)
     expect(errors).toEqual([])
   })
 
   test('navigation is visible', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/add')
     await waitForApp(page)
     await expect(page.getByTestId('app-navigation')).toBeVisible()
   })
 
   test('sign-in button visible when logged out', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/add')
     await waitForApp(page)
     await expect(page.getByTestId('nav-sign-in-button')).toBeVisible()
     await expect(page.getByTestId('nav-user-name')).toHaveCount(0)

@@ -5,8 +5,19 @@
 import { useState, useCallback, useEffect, useMemo } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery, useMutations, useRecordContext } from 'deepspace'
-import { Button, buttonVariants, cn, useToast } from '../components/ui'
-import { MEAL_TYPE_OPTIONS, MEAL_TYPE_CONFIG, type MealType } from '../constants'
+import {
+  ChevronLeft,
+  ShoppingCart,
+  Star,
+  SquarePen,
+  Plus,
+  Check,
+  X,
+  ChefHat,
+  ExternalLink,
+} from 'lucide-react'
+import { Button, useToast } from '../components/ui'
+import { MEAL_TYPE_OPTIONS, MEAL_ACCENT, type MealType } from '../constants'
 import { useAuthGate } from '../hooks/useAuthGate'
 import { useConfirm } from '../hooks/useConfirm'
 
@@ -24,6 +35,10 @@ interface Recipe {
   notes: string
   recipeSourceUrl?: string
   mealType?: string
+  keyIngredients?: string[]
+  calories?: number
+  protein?: number
+  servings?: number
 }
 
 interface RecipeRecord {
@@ -284,388 +299,440 @@ export default function RecipeDetailPage() {
   }, [recipe, guard, confirm, rawRemove, navigate])
   
   if (!recipe) {
+    // Still hydrating the record store — show a light loading state rather
+    // than flashing "not found".
+    if (!recordStoreReady) {
+      return (
+        <div className="flex min-h-full items-center justify-center bg-background">
+          <div className="w-10 h-10 rounded-full border-2 border-border border-t-primary animate-spin" />
+        </div>
+      )
+    }
     return (
-      <div className="flex min-h-full items-center justify-center">
+      <div className="flex min-h-full items-center justify-center bg-background">
         <div className="text-center">
-          <div className="w-16 h-16 mx-auto mb-4 bg-surface-elevated rounded-2xl flex items-center justify-center">
-            <svg className="w-8 h-8 text-content-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
+          <div className="w-16 h-16 mx-auto mb-4 bg-photo-tile rounded-[18px] flex items-center justify-center">
+            <ChefHat className="w-8 h-8 text-faint" strokeWidth={1.5} />
           </div>
-          <p className="text-content-secondary">Recipe not found</p>
-          <Link to="/recipes" className="inline-block mt-4">
-            <Button variant="secondary" size="sm">Back to recipes</Button>
+          <p className="text-body-soft mb-4">Recipe not found</p>
+          <Link
+            to="/recipes"
+            className="inline-flex items-center gap-1.5 text-[14px] font-semibold text-primary-deep hover:text-primary transition-colors"
+          >
+            <ChevronLeft className="w-4 h-4" />
+            Back to My Recipes
           </Link>
         </div>
       </div>
     )
   }
-  
+
   const { data } = recipe
-  
+  const ingredientCount = data.ingredients?.length ?? 0
+  const savedDate = data.savedAt
+    ? new Date(data.savedAt).toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      })
+    : ''
+  const currentMealType = (data.mealType || 'other') as MealType
+  const panelCard =
+    'bg-card rounded-[20px] border border-border shadow-[0_12px_26px_-18px_rgba(61,35,20,0.4)] p-[22px]'
+
   return (
-    <div className="min-h-full">
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Back Link */}
+    <div className="min-h-full bg-background">
+      <div className="max-w-[1000px] mx-auto px-[28px] pt-[26px] pb-[72px]">
+        {/* Back link */}
         <Link
           to="/recipes"
-          className="inline-flex items-center gap-2 text-content-secondary hover:text-content text-sm mb-6 transition-colors"
+          className="inline-flex items-center gap-1.5 text-[14px] font-semibold text-[#8a6a4a] hover:text-ink transition-colors mb-5"
         >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-          Back to recipes
+          <ChevronLeft className="w-4 h-4" />
+          Back to My Recipes
         </Link>
-        
-        {/* Header */}
-        <div className="bg-surface-elevated rounded-2xl shadow-card border border-border overflow-hidden mb-6">
-          <div className="flex flex-col sm:flex-row">
-            {/* Image */}
+
+        <div className="grid md:grid-cols-[360px_1fr] gap-[34px] items-start">
+          {/* ── Left column ─────────────────────────────────────────── */}
+          <div className="md:sticky md:top-[92px] flex flex-col gap-3">
+            {/* Square image card */}
             {data.imageUrl ? (
-              <a
-                href={data.instagramUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="relative w-full sm:w-48 h-48 flex-shrink-0 group"
-              >
-                <img
-                  src={data.imageUrl}
-                  alt={data.title}
-                  className="w-full h-full object-cover"
-                />
-                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center">
-                  <svg className="w-10 h-10 text-white opacity-0 group-hover:opacity-100 transition-opacity" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073z"/>
-                    <circle cx="12" cy="12" r="3.5"/>
-                  </svg>
+              data.instagramUrl ? (
+                <a
+                  href={data.instagramUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block aspect-square rounded-[22px] border border-border overflow-hidden bg-photo-tile shadow-[0_22px_44px_-24px_rgba(61,35,20,0.55)]"
+                >
+                  <img src={data.imageUrl} alt={data.title} className="w-full h-full object-cover" />
+                </a>
+              ) : (
+                <div className="aspect-square rounded-[22px] border border-border overflow-hidden bg-photo-tile shadow-[0_22px_44px_-24px_rgba(61,35,20,0.55)]">
+                  <img src={data.imageUrl} alt={data.title} className="w-full h-full object-cover" />
                 </div>
-              </a>
+              )
             ) : (
-              <div className="w-full sm:w-48 h-48 flex-shrink-0 bg-surface-overlay flex items-center justify-center">
-                <svg className="w-16 h-16 text-content-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
-                </svg>
+              <div className="aspect-square rounded-[22px] border border-border overflow-hidden bg-photo-tile shadow-[0_22px_44px_-24px_rgba(61,35,20,0.55)] flex items-center justify-center">
+                <ChefHat className="w-14 h-14 text-faint" strokeWidth={1.5} />
               </div>
             )}
-            
-            {/* Title & Meta */}
-            <div className="flex-1 p-6">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex-1">
-                  {editingTitle ? (
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={title}
-                        onChange={(e) => setTitle(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') saveTitle()
-                          if (e.key === 'Escape') {
-                            setTitle(data.title)
-                            setEditingTitle(false)
-                          }
-                        }}
-                        className="flex-1 text-2xl font-bold text-content bg-surface-input border border-border rounded-lg px-3 py-1 focus:outline-none focus:border-primary"
-                        autoFocus
-                      />
-                      <button
-                        onClick={saveTitle}
-                        className="p-1.5 bg-success text-white rounded-lg hover:bg-success/90"
-                      >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setTitle(data.title)
-                          setEditingTitle(false)
-                        }}
-                        className="p-1.5 bg-surface-overlay text-content-muted rounded-lg hover:text-danger"
-                      >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
-                    </div>
-                  ) : (
-                    <h1 
-                      className="text-2xl font-bold text-content cursor-pointer hover:text-primary transition-colors group"
-                      onClick={() => setEditingTitle(true)}
-                      title="Click to edit"
-                    >
-                      {data.title}
-                      <svg className="w-4 h-4 inline-block ml-2 opacity-0 group-hover:opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                      </svg>
-                    </h1>
-                  )}
-                  {editingAuthor ? (
-                    <div className="flex items-center gap-2 mt-1">
-                      <span className="text-content-secondary">by @</span>
-                      <input
-                        type="text"
-                        value={author}
-                        onChange={(e) => setAuthor(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') saveAuthor()
-                          if (e.key === 'Escape') {
-                            setAuthor(data.author)
-                            setEditingAuthor(false)
-                          }
-                        }}
-                        className="flex-1 text-sm text-content-secondary bg-surface-input border border-border rounded-lg px-2 py-0.5 focus:outline-none focus:border-primary"
-                        autoFocus
-                      />
-                      <button
-                        onClick={saveAuthor}
-                        className="p-1 bg-success text-white rounded-lg hover:bg-success/90"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setAuthor(data.author)
-                          setEditingAuthor(false)
-                        }}
-                        className="p-1 bg-surface-overlay text-content-muted rounded-lg hover:text-danger"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
-                    </div>
-                  ) : (
-                    <p 
-                      className="text-content-secondary mt-1 cursor-pointer hover:text-primary transition-colors group/author"
-                      onClick={() => setEditingAuthor(true)}
-                      title="Click to edit author"
-                    >
-                      by @{data.author}
-                      <svg className="w-3 h-3 inline-block ml-1 opacity-0 group-hover/author:opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                      </svg>
-                    </p>
-                  )}
-                </div>
-                <button
-                  onClick={toggleStar}
-                  className={`flex-shrink-0 p-2 rounded-lg transition-colors ${
-                    data.starred
-                      ? 'bg-warning-muted text-warning'
-                      : 'bg-surface-overlay text-content-muted hover:text-warning'
-                  }`}
+
+            {/* Add all to grocery — primary action */}
+            {ingredientCount > 0 && (
+              <div className="flex flex-col gap-2">
+                <Button
+                  onClick={addAllIngredientsToGrocery}
+                  loading={addingGroceries}
+                  disabled={
+                    addingGroceries ||
+                    !recordStoreReady ||
+                    ingredientsMissingFromGrocery.length === 0
+                  }
+                  title={
+                    !recordStoreReady
+                      ? 'Wait for the app to finish connecting, then try again.'
+                      : ingredientsMissingFromGrocery.length === 0
+                        ? 'Every ingredient is already on your grocery list.'
+                        : 'Add all missing ingredients to your grocery list.'
+                  }
+                  className="w-full h-[50px] rounded-[14px] gap-2 text-[15px] font-bold shadow-[0_10px_20px_-8px_rgba(226,87,11,0.7)]"
                 >
-                  <svg className="w-6 h-6" fill={data.starred ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-                  </svg>
+                  <ShoppingCart className="shrink-0" />
+                  {ingredientsMissingFromGrocery.length === 0
+                    ? 'All ingredients added'
+                    : `Add all to grocery (${ingredientsMissingFromGrocery.length})`}
+                </Button>
+                <Link
+                  to="/grocery"
+                  className="text-center text-[13px] font-semibold text-primary-deep hover:text-primary transition-colors"
+                >
+                  View grocery list
+                </Link>
+              </div>
+            )}
+
+            {/* Favorite + Edit */}
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={toggleStar}
+                className={`h-[46px] rounded-[14px] bg-surface-soft border border-input flex items-center justify-center gap-2 text-[14px] font-semibold transition-colors hover:bg-cream ${
+                  data.starred ? 'text-star' : 'text-[#a06a3a]'
+                }`}
+              >
+                <Star className="w-[18px] h-[18px]" fill={data.starred ? 'currentColor' : 'none'} />
+                {data.starred ? 'Favorited' : 'Favorite'}
+              </button>
+              <button
+                onClick={() => setEditingIngredients((v) => !v)}
+                className="h-[46px] rounded-[14px] bg-surface-soft border border-input flex items-center justify-center gap-2 text-[14px] font-semibold text-body-soft transition-colors hover:bg-cream"
+              >
+                <SquarePen className="w-[18px] h-[18px]" />
+                Edit
+              </button>
+            </div>
+
+            {/* Delete — quiet action */}
+            <button
+              onClick={deleteRecipe}
+              className="self-center mt-1 text-[13px] text-muted-2 hover:text-destructive transition-colors"
+            >
+              Delete recipe
+            </button>
+          </div>
+
+          {/* ── Right column ────────────────────────────────────────── */}
+          <div className="flex flex-col gap-5 min-w-0">
+            {/* Meal type selector */}
+            <div className="flex items-center gap-3 flex-wrap">
+              {MEAL_TYPE_OPTIONS.map((opt) => {
+                const isSelected = currentMealType === opt.value
+                const accent = MEAL_ACCENT[opt.value]
+                return (
+                  <button
+                    key={opt.value}
+                    onClick={() => updateMealType(opt.value)}
+                    className="inline-flex items-center gap-1.5 text-[13px] font-bold transition-colors"
+                    style={isSelected ? { color: accent } : undefined}
+                  >
+                    {isSelected && (
+                      <span
+                        className="w-1.5 h-1.5 rounded-full"
+                        style={{ backgroundColor: accent }}
+                      />
+                    )}
+                    <span className={isSelected ? '' : 'text-muted-2 font-semibold'}>
+                      {opt.label}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Title */}
+            {editingTitle ? (
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') saveTitle()
+                    if (e.key === 'Escape') {
+                      setTitle(data.title)
+                      setEditingTitle(false)
+                    }
+                  }}
+                  className="flex-1 min-w-0 text-[30px] font-extrabold tracking-[-0.03em] text-ink bg-surface-soft border border-input rounded-[12px] px-3 py-1 focus:outline-none focus:border-primary"
+                  autoFocus
+                />
+                <button
+                  onClick={saveTitle}
+                  className="shrink-0 w-10 h-10 rounded-[10px] bg-primary text-white flex items-center justify-center transition-opacity hover:opacity-90"
+                  title="Save"
+                >
+                  <Check className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={() => {
+                    setTitle(data.title)
+                    setEditingTitle(false)
+                  }}
+                  className="shrink-0 w-10 h-10 rounded-[10px] bg-surface-soft border border-input text-muted-2 flex items-center justify-center transition-colors hover:text-destructive"
+                  title="Cancel"
+                >
+                  <X className="w-5 h-5" />
                 </button>
               </div>
-              
-              {data.tags && data.tags.length > 0 && (
-                <div className="flex flex-wrap gap-2 mt-4">
-                  {data.tags.map((tag, i) => (
-                    <span key={i} className="px-2.5 py-1 bg-primary-muted text-primary text-xs font-medium rounded-full">
-                      #{tag}
-                    </span>
-                  ))}
-                </div>
-              )}
-              
-              {/* Meal Type */}
-              <div className="flex items-center gap-2 mt-4">
-                <span className="text-xs text-content-muted">Meal type:</span>
-                <div className="flex gap-1 flex-wrap">
-                  {MEAL_TYPE_OPTIONS.map(opt => {
-                    const currentMealType = (data.mealType || 'other') as MealType
-                    const isSelected = currentMealType === opt.value
-                    const config = MEAL_TYPE_CONFIG[opt.value]
-                    const selectedColorMap: Record<string, string> = {
-                      warning: 'bg-warning/15 text-warning ring-1 ring-warning/30',
-                      primary: 'bg-primary/15 text-primary ring-1 ring-primary/30',
-                      danger: 'bg-danger/15 text-danger ring-1 ring-danger/30',
-                      success: 'bg-success/15 text-success ring-1 ring-success/30',
-                      muted: 'bg-surface-overlay text-content-secondary ring-1 ring-border',
-                    }
-                    const activeClass = selectedColorMap[config.color] || selectedColorMap.muted
-                    return (
-                      <button
-                        key={opt.value}
-                        onClick={() => updateMealType(opt.value)}
-                        className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-                          isSelected
-                            ? activeClass
-                            : 'bg-surface-overlay/50 text-content-muted hover:text-content-secondary hover:bg-surface-overlay'
-                        }`}
-                      >
-                        {opt.label}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
+            ) : (
+              <h1
+                onClick={() => setEditingTitle(true)}
+                title="Click to edit"
+                className="group text-[38px] font-extrabold leading-[1.05] tracking-[-0.03em] text-ink cursor-pointer inline-flex items-start gap-2"
+              >
+                {data.title}
+                <SquarePen className="w-4 h-4 mt-3 shrink-0 text-muted-2 opacity-0 group-hover:opacity-100 transition-opacity" />
+              </h1>
+            )}
 
-              {/* Add to grocery — primary action */}
-              {(data.ingredients?.length ?? 0) > 0 && (
-                <div className="flex flex-col sm:flex-row sm:items-center gap-2 mt-5">
-                  <Button
-                    size="lg"
-                    className="w-full sm:w-auto gap-2"
-                    onClick={addAllIngredientsToGrocery}
-                    disabled={
-                      addingGroceries ||
-                      !recordStoreReady ||
-                      ingredientsMissingFromGrocery.length === 0
-                    }
-                    loading={addingGroceries}
-                    title={
-                      !recordStoreReady
-                        ? 'Wait for the app to finish connecting, then try again.'
-                        : ingredientsMissingFromGrocery.length === 0
-                          ? 'Every ingredient is already on your grocery list.'
-                          : 'Add all missing ingredients to your grocery list.'
-                    }
+            {/* Meta line */}
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[14px] text-muted-foreground">
+              {editingAuthor ? (
+                <span className="inline-flex items-center gap-2">
+                  by @
+                  <input
+                    type="text"
+                    value={author}
+                    onChange={(e) => setAuthor(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') saveAuthor()
+                      if (e.key === 'Escape') {
+                        setAuthor(data.author)
+                        setEditingAuthor(false)
+                      }
+                    }}
+                    className="text-[14px] text-body bg-surface-soft border border-input rounded-[8px] px-2 py-0.5 focus:outline-none focus:border-primary"
+                    autoFocus
+                  />
+                  <button
+                    onClick={saveAuthor}
+                    className="w-7 h-7 rounded-[8px] bg-primary text-white flex items-center justify-center transition-opacity hover:opacity-90"
+                    title="Save"
                   >
-                    <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
-                    </svg>
-                    {ingredientsMissingFromGrocery.length === 0
-                      ? 'All ingredients on grocery list'
-                      : `Add to grocery list (${ingredientsMissingFromGrocery.length})`}
-                  </Button>
-                  <Link
-                    to="/grocery"
-                    className={cn(buttonVariants({ variant: 'secondary', size: 'lg' }), 'w-full sm:w-auto')}
+                    <Check className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      setAuthor(data.author)
+                      setEditingAuthor(false)
+                    }}
+                    className="w-7 h-7 rounded-[8px] bg-surface-soft border border-input text-muted-2 flex items-center justify-center transition-colors hover:text-destructive"
+                    title="Cancel"
                   >
-                    View grocery list
-                  </Link>
-                </div>
+                    <X className="w-4 h-4" />
+                  </button>
+                </span>
+              ) : (
+                <button
+                  onClick={() => setEditingAuthor(true)}
+                  title="Click to edit author"
+                  className="group inline-flex items-center gap-1 hover:text-body transition-colors"
+                >
+                  by @{data.author}
+                  <SquarePen className="w-3 h-3 opacity-0 group-hover:opacity-60 transition-opacity" />
+                </button>
               )}
-              
-              <div className="flex items-center gap-4 mt-4 text-sm text-content-muted flex-wrap">
-                <span>Saved {new Date(data.savedAt).toLocaleDateString()}</span>
-                {data.instagramUrl && (
+              {savedDate && (
+                <>
+                  <span aria-hidden>·</span>
+                  <span>Saved {savedDate}</span>
+                </>
+              )}
+              {data.calories != null && (
+                <>
+                  <span aria-hidden>·</span>
+                  <span>
+                    ≈{data.calories} kcal
+                    {data.protein != null && ` · ${data.protein}g protein`}
+                    {data.servings != null
+                      ? ` / serving (serves ${data.servings})`
+                      : ' / serving'}
+                  </span>
+                </>
+              )}
+              {data.instagramUrl && (
+                <>
+                  <span aria-hidden>·</span>
                   <a
                     href={data.instagramUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-primary hover:underline"
+                    className="text-primary-deep hover:text-primary transition-colors"
                   >
                     {data.instagramUrl.includes('instagram.com') ? 'View on Instagram' : 'View Source'}
                   </a>
-                )}
-                {data.recipeSourceUrl && (
+                </>
+              )}
+              {data.recipeSourceUrl && (
+                <>
+                  <span aria-hidden>·</span>
                   <a
                     href={data.recipeSourceUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-info hover:underline"
+                    className="inline-flex items-center gap-1 text-primary-deep hover:text-primary transition-colors"
                   >
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
-                    </svg>
-                    Recipe from {(() => {
-                      try { return new URL(data.recipeSourceUrl).hostname.replace('www.', '') } catch { return 'website' }
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    Recipe from{' '}
+                    {(() => {
+                      try {
+                        return new URL(data.recipeSourceUrl).hostname.replace('www.', '')
+                      } catch {
+                        return 'website'
+                      }
                     })()}
                   </a>
-                )}
-              </div>
+                </>
+              )}
             </div>
-          </div>
-        </div>
-        
-        {/* Ingredients */}
-        <div className="bg-surface-elevated rounded-2xl shadow-card border border-border overflow-hidden mb-6">
-          <div className="p-4 border-b border-border flex flex-wrap items-center gap-2 justify-between">
-            <h2 className="font-semibold text-content">Ingredients</h2>
-            {editingIngredients ? (
-              <div className="flex gap-2">
-                <Button variant="ghost" size="sm" onClick={() => {
-                  setIngredients(data.ingredients || [])
-                  setEditingIngredients(false)
-                }}>
-                  Cancel
-                </Button>
-                <Button size="sm" onClick={saveIngredients}>
-                  Save
-                </Button>
-              </div>
-            ) : (
-              <div className="flex flex-wrap items-center gap-2">
-                {(data.ingredients?.length ?? 0) > 0 && (
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={addAllIngredientsToGrocery}
-                    disabled={
-                      addingGroceries ||
-                      !recordStoreReady ||
-                      ingredientsMissingFromGrocery.length === 0
-                    }
-                    loading={addingGroceries}
+
+            {/* Tags */}
+            {data.tags && data.tags.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {data.tags.map((tag, i) => (
+                  <span
+                    key={i}
+                    className="px-2.5 py-1 rounded-full bg-tag text-[#8a6a4a] text-[11.5px] font-semibold"
                   >
-                    Add to grocery
-                  </Button>
-                )}
-                <Button variant="ghost" size="sm" onClick={() => setEditingIngredients(true)}>
-                  Edit
-                </Button>
+                    #{tag}
+                  </span>
+                ))}
               </div>
             )}
-          </div>
-          
-          <div className="p-4">
-            {editingIngredients ? (
-              <div className="space-y-2">
-                {ingredients.map((ing, i) => (
-                  <div key={i} className="flex gap-2">
-                    <input
-                      type="text"
-                      value={ing}
-                      onChange={(e) => updateIngredient(i, e.target.value)}
-                      className="flex-1 px-3 py-2 bg-surface-input border border-border rounded-lg text-content text-sm focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary-muted"
-                      placeholder="Ingredient with amount..."
-                    />
-                    <button
-                      onClick={() => removeIngredient(i)}
-                      className="p-2 text-content-muted hover:text-danger transition-colors"
+
+            {/* Ingredients panel */}
+            <div className={panelCard}>
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                <div className="flex items-baseline gap-2">
+                  <h2 className="text-[18px] font-extrabold tracking-[-0.01em] text-ink">
+                    Ingredients
+                  </h2>
+                  <span className="text-[13px] text-muted-2">{ingredientCount} items</span>
+                </div>
+                {editingIngredients ? (
+                  <div className="flex gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setIngredients(data.ingredients || [])
+                        setEditingIngredients(false)
+                      }}
                     >
-                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
+                      Cancel
+                    </Button>
+                    <Button size="sm" onClick={saveIngredients}>
+                      Save
+                    </Button>
                   </div>
-                ))}
-                <button
-                  onClick={addIngredient}
-                  className="w-full py-2 border border-dashed border-border rounded-lg text-content-muted hover:text-content hover:border-border-strong transition-colors text-sm"
-                >
-                  + Add ingredient
-                </button>
-              </div>
-            ) : (
-              <ul className="space-y-2">
-                {(data.ingredients || []).length === 0 ? (
-                  <p className="text-content-muted text-sm">No ingredients listed</p>
                 ) : (
-                  data.ingredients.map((ing, i) => {
+                  <div className="flex flex-wrap items-center gap-2">
+                    {ingredientCount > 0 && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={addAllIngredientsToGrocery}
+                        disabled={
+                          addingGroceries ||
+                          !recordStoreReady ||
+                          ingredientsMissingFromGrocery.length === 0
+                        }
+                        loading={addingGroceries}
+                      >
+                        Add to grocery
+                      </Button>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setEditingIngredients(true)}
+                    >
+                      Edit
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              {editingIngredients ? (
+                <div className="space-y-2 pt-2">
+                  {ingredients.map((ing, i) => (
+                    <div key={i} className="flex gap-2">
+                      <input
+                        type="text"
+                        value={ing}
+                        onChange={(e) => updateIngredient(i, e.target.value)}
+                        className="flex-1 min-w-0 px-3 py-2 bg-surface-soft border border-input rounded-[10px] text-[14.5px] text-body focus:outline-none focus:border-primary"
+                        placeholder="Ingredient with amount…"
+                      />
+                      <button
+                        onClick={() => removeIngredient(i)}
+                        className="w-[38px] shrink-0 rounded-[10px] bg-surface-soft border border-input text-muted-2 hover:text-destructive flex items-center justify-center transition-colors"
+                        title="Remove"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    onClick={addIngredient}
+                    className="w-full py-2 border border-dashed border-input rounded-[10px] text-[14px] text-muted-2 hover:text-body hover:border-border transition-colors flex items-center justify-center gap-1.5"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Add ingredient
+                  </button>
+                </div>
+              ) : ingredientCount === 0 ? (
+                <p className="text-muted-2 text-sm pt-3">No ingredients listed</p>
+              ) : (
+                <ul className="mt-1">
+                  {data.ingredients.map((ing, i) => {
                     const inList = isInGroceryList(ing)
                     const addBlocked = !recordStoreReady && !inList
                     return (
-                      <li key={i} className="flex items-center gap-3">
-                        <span className="text-primary">•</span>
-                        <span className="flex-1 text-content-secondary">{ing}</span>
+                      <li
+                        key={i}
+                        className="group flex items-center gap-3 border-t border-[#f2e7d8] py-2.5 first:border-t-0"
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full bg-primary shrink-0" />
+                        <span className="flex-1 text-[14.5px] text-body">{ing}</span>
                         <button
                           onClick={() => !inList && recordStoreReady && addIngredientToGrocery(ing)}
                           disabled={inList || addBlocked}
-                          className={`flex-shrink-0 p-1.5 rounded-lg transition-colors ${
+                          className={`w-[30px] h-[30px] shrink-0 rounded-[9px] flex items-center justify-center transition-all ${
                             inList
-                              ? 'bg-success-muted text-success cursor-default'
+                              ? 'bg-success/15 text-success cursor-default'
                               : addBlocked
-                                ? 'bg-surface-overlay text-content-muted opacity-50 cursor-not-allowed'
-                                : 'bg-surface-overlay text-content-muted hover:bg-primary-muted hover:text-primary'
+                                ? 'bg-note text-[#a06a3a] opacity-40 cursor-not-allowed'
+                                : 'bg-note text-[#a06a3a] opacity-70 group-hover:opacity-100 hover:brightness-95'
                           }`}
                           title={
                             inList
@@ -676,80 +743,62 @@ export default function RecipeDetailPage() {
                           }
                         >
                           {inList ? (
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                            </svg>
+                            <Check className="w-3.5 h-3.5" />
                           ) : (
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                            </svg>
+                            <Plus className="w-3.5 h-3.5" />
                           )}
                         </button>
                       </li>
                     )
-                  })
+                  })}
+                </ul>
+              )}
+            </div>
+
+            {/* Method panel */}
+            <div className={panelCard}>
+              <h2 className="text-[18px] font-extrabold tracking-[-0.01em] text-ink mb-3">
+                Method
+              </h2>
+              {(data.instructions || []).length === 0 ? (
+                <p className="text-muted-2 text-sm">No instructions listed</p>
+              ) : (
+                <ol className="space-y-4">
+                  {data.instructions.map((step, i) => (
+                    <li key={i} className="flex gap-4">
+                      <span className="shrink-0 w-[30px] h-[30px] rounded-[10px] bg-cream text-primary text-[14px] font-extrabold flex items-center justify-center">
+                        {i + 1}
+                      </span>
+                      <p className="text-[15px] leading-[1.6] text-body pt-1">{step}</p>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
+
+            {/* My notes panel */}
+            <div className="bg-note rounded-[20px] border border-border p-[22px]">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-[18px] font-extrabold tracking-[-0.01em] text-ink">
+                  My notes
+                </h2>
+                {notesEdited && (
+                  <Button size="sm" onClick={saveNotes}>
+                    Save
+                  </Button>
                 )}
-              </ul>
-            )}
+              </div>
+              <textarea
+                value={notes}
+                onChange={(e) => {
+                  setNotes(e.target.value)
+                  setNotesEdited(true)
+                }}
+                placeholder="Add your tweaks, timings, and tips…"
+                className="w-full h-32 px-4 py-3 bg-surface-soft border border-input rounded-[12px] text-[14.5px] text-body placeholder:text-muted-2 focus:outline-none focus:border-primary resize-none"
+              />
+            </div>
           </div>
-        </div>
-        
-        {/* Instructions */}
-        <div className="bg-surface-elevated rounded-2xl shadow-card border border-border overflow-hidden mb-6">
-          <div className="p-4 border-b border-border">
-            <h2 className="font-semibold text-content">Instructions</h2>
-          </div>
-          
-          <div className="p-4">
-            {(data.instructions || []).length === 0 ? (
-              <p className="text-content-muted text-sm">No instructions listed</p>
-            ) : (
-              <ol className="space-y-4">
-                {data.instructions.map((step, i) => (
-                  <li key={i} className="flex gap-4">
-                    <span className="flex-shrink-0 w-7 h-7 bg-primary-muted text-primary rounded-full flex items-center justify-center text-sm font-medium">
-                      {i + 1}
-                    </span>
-                    <p className="text-content-secondary pt-0.5">{step}</p>
-                  </li>
-                ))}
-              </ol>
-            )}
-          </div>
-        </div>
-        
-        {/* Notes */}
-        <div className="bg-surface-elevated rounded-2xl shadow-card border border-border overflow-hidden mb-6">
-          <div className="p-4 border-b border-border flex items-center justify-between">
-            <h2 className="font-semibold text-content">My Notes</h2>
-            {notesEdited && (
-              <Button size="sm" onClick={saveNotes}>
-                Save Notes
-              </Button>
-            )}
-          </div>
-          
-          <div className="p-4">
-            <textarea
-              value={notes}
-              onChange={(e) => {
-                setNotes(e.target.value)
-                setNotesEdited(true)
-              }}
-              placeholder="Add your personal notes, modifications, or tips..."
-              className="w-full h-32 px-4 py-3 bg-surface-input border border-border rounded-xl text-content placeholder:text-content-muted focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary-muted resize-none"
-            />
-          </div>
-        </div>
-        
-        {/* Delete */}
-        <div className="flex justify-end">
-          <button
-            onClick={deleteRecipe}
-            className="text-sm text-content-muted hover:text-danger transition-colors"
-          >
-            Delete this recipe
-          </button>
         </div>
       </div>
 

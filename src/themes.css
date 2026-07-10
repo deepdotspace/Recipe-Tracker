@@ -374,28 +374,44 @@
 
 /* Foodie — warm cream with appetizing orange accent (recipes, food, cozy lifestyle).
    Ported from the original HyperFoodie "Foodie Heaven" palette. */
+/*
+ * Foodie — refined per design_handoff_recipe_box/README.md ("Recipe Box —
+ * Warm Professional Redesign"). Palette values are final; don't tweak
+ * without a new handoff.
+ */
 [data-theme="foodie"] {
   color-scheme: light;
-  --color-background: #fef7ed;
-  --color-foreground: #3d2314;
+  --color-background: #fdf6ec;
+  --color-foreground: #2e1c10;          /* ink */
   --color-card: #ffffff;
-  --color-card-foreground: #3d2314;
+  --color-card-foreground: #33261a;     /* body */
   --color-popover: #ffffff;
-  --color-popover-foreground: #3d2314;
-  --color-primary: #ea580c;
+  --color-popover-foreground: #33261a;
+  --color-primary: #e2570b;
   --color-primary-foreground: #ffffff;
-  --color-secondary: #fbe8d8;
-  --color-secondary-foreground: #3d2314;
-  --color-muted: #fbe8d8;
-  --color-muted-foreground: #9c7a62;
-  --color-accent: #f7ddc7;
-  --color-accent-foreground: #3d2314;
+  --color-secondary: #f6ead9;           /* cream */
+  --color-secondary-foreground: #5c4632;
+  --color-muted: #f7ede0;               /* tag-bg */
+  --color-muted-foreground: #8a7256;
+  --color-accent: #fbf1e6;              /* note-bg */
+  --color-accent-foreground: #2e1c10;
   --color-destructive: #dc2626;
   --color-destructive-foreground: #ffffff;
-  --color-border: #ecd9c6;
-  --color-input: #ecd9c6;
-  --color-ring: #ea580c;
-  --shadow-card: 0 4px 20px rgba(61, 35, 20, 0.08);
-  --shadow-card-hover: 0 8px 30px rgba(61, 35, 20, 0.12);
+  --color-border: #efe1d0;
+  --color-input: #ecdcc8;               /* border-input */
+  --color-ring: #e2570b;
+
+  /* Handoff-specified olive for grocery progress / checked states. */
+  --color-success: #6b8e23;
+  --color-success-foreground: #ffffff;
+  --color-success-muted: rgba(107, 142, 35, 0.18);
+  --color-success-border: rgba(107, 142, 35, 0.4);
+
+  /* Legacy alias overrides so existing bg-surface-* usage warms up too. */
+  --color-surface-input: #fffaf2;
+  --color-surface-overlay: #f7ede0;
+
+  --shadow-card: 0 12px 26px -18px rgba(61, 35, 20, 0.4);
+  --shadow-card-hover: 0 22px 44px -24px rgba(61, 35, 20, 0.55);
 }
 

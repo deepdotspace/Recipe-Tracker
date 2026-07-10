@@ -15,7 +15,7 @@ import { test, expect } from 'deepspace/testing'
 test('two users render with their own names', async ({ users }) => {
   const [a, b] = await users(['Collab A', 'Collab B'])
 
-  await Promise.all([a.page.goto('/'), b.page.goto('/')])
+  await Promise.all([a.page.goto('/add'), b.page.goto('/add')])
 
   await expect(a.page.getByTestId('app-navigation')).toBeVisible({ timeout: 15_000 })
   await expect(b.page.getByTestId('app-navigation')).toBeVisible({ timeout: 15_000 })

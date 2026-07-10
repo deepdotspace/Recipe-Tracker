@@ -3,10 +3,12 @@
  */
 
 import { useState, useCallback } from 'react'
-import { useQuery, useMutations, useRecordContext, integration, useAuth, AuthOverlay } from 'deepspace'
-import { useNavigate, Link } from 'react-router-dom'
-import { Button, useToast } from '../components/ui'
-import { MEAL_TYPE_OPTIONS, MEAL_TYPE_CONFIG, type MealType } from '../constants'
+import { useMutations, useRecordContext, integration, useAuth, AuthOverlay } from 'deepspace'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useToast } from '../components/ui'
+import { MEAL_TYPE_OPTIONS, MEAL_ACCENT, type MealType } from '../constants'
+import { usePlanGate } from '../hooks/usePlanGate'
+import { Check, Loader2, ExternalLink, Globe } from 'lucide-react'
 
 interface Recipe {
   title: string
@@ -23,11 +25,9 @@ interface Recipe {
   recipeSourceUrl?: string
   mealType?: MealType
   keyIngredients?: string[]
-}
-
-interface RecipeRecord {
-  recordId: string
-  data: Recipe
+  calories?: number
+  protein?: number
+  servings?: number
 }
 
 /** OpenAI chat completion — api-worker returns handler output inside `data` */
@@ -63,7 +63,10 @@ Return ONLY valid JSON with this exact structure (no markdown, no explanation):
   "instructions": ["Step 1 description", "Step 2 description"],
   "tags": ["tag1", "tag2"],
   "mealType": "breakfast" | "dinner" | "dessert" | "snack" | "other",
-  "keyIngredients": ["ingredient1", "ingredient2", "ingredient3"]
+  "keyIngredients": ["ingredient1", "ingredient2", "ingredient3"],
+  "servings": 4,
+  "calories": 520,
+  "protein": 34
 }
 
 Rules:
@@ -81,11 +84,58 @@ Rules:
   - "snack" — light bites, appetizers, dips, finger food, etc.
   - "other" — drinks, sauces, condiments, or anything that doesn't clearly fit above
 - If the content mentions a specific dish or food item by name but doesn't include the full recipe details (e.g., a social media caption teasing a recipe, or a truncated post), still extract the dish name as the title and return empty ingredients/instructions arrays. This is important so we can search for the full recipe elsewhere.
+- Nutrition estimation (servings, calories, protein): estimate how many servings the recipe makes, then estimate APPROXIMATE calories (kcal) and protein (grams) PER SERVING from the ingredient list and amounts. Use standard nutrition knowledge (e.g., 6 oz chicken breast ≈ 280 kcal / 52g protein). Round to whole numbers. Be realistic, not optimistic. If ingredients or amounts are missing so no reasonable estimate is possible, use null for calories and protein.
 - ONLY return {"title": "Not a recipe", "ingredients": [], "instructions": [], "tags": [], "mealType": "other"} if the content has absolutely nothing to do with food or cooking.
 - Always return valid JSON, nothing else`
 
 function isInstagramUrl(url: string): boolean {
   return url.includes('instagram.com') || url.includes('instagr.am')
+}
+
+// Social platforms whose posts usually tease a recipe without including the
+// full ingredient list — for these, an incomplete parse falls back to a web
+// search for the complete recipe (same flow Instagram has always used).
+const SOCIAL_HOSTS = [
+  'instagram.com', 'instagr.am',
+  'twitter.com', 'x.com', 't.co',
+  'youtube.com', 'youtu.be',
+]
+
+function isSocialUrl(url: string): boolean {
+  return SOCIAL_HOSTS.some((host) => url.includes(host))
+}
+
+// Platforms our scrapers verifiably cannot read (login walls block Firecrawl
+// and Exa). Fail fast with a helpful message instead of burning a scrape
+// call that will error anyway. Re-test before removing a host from this list.
+const UNSUPPORTED_HOSTS: Array<{ host: string; label: string }> = [
+  { host: 'tiktok.com', label: 'TikTok' },
+  { host: 'vm.tiktok.com', label: 'TikTok' },
+  { host: 'reddit.com', label: 'Reddit' },
+  { host: 'redd.it', label: 'Reddit' },
+  { host: 'facebook.com', label: 'Facebook' },
+  { host: 'fb.watch', label: 'Facebook' },
+]
+
+function unsupportedHostLabel(url: string): string | null {
+  return UNSUPPORTED_HOSTS.find(({ host }) => url.includes(host))?.label ?? null
+}
+
+// Extract a YouTube video id from watch/short/embed/youtu.be URL shapes.
+function getYouTubeVideoId(url: string): string | null {
+  try {
+    const u = new URL(url)
+    const host = u.hostname.replace('www.', '')
+    if (host === 'youtu.be') return u.pathname.slice(1).split('/')[0] || null
+    if (host === 'youtube.com' || host === 'm.youtube.com') {
+      if (u.pathname === '/watch') return u.searchParams.get('v')
+      const pathMatch = u.pathname.match(/^\/(shorts|embed|live)\/([\w-]+)/)
+      if (pathMatch) return pathMatch[2]
+    }
+  } catch {
+    // fall through
+  }
+  return null
 }
 
 // Detect if a caption was truncated by the Instagram API.
@@ -106,7 +156,26 @@ function toMealType(value: string): MealType {
   return VALID_MEAL_TYPES.includes(value as MealType) ? (value as MealType) : 'other'
 }
 
-async function parseRecipeWithAI(caption: string): Promise<{ title: string; ingredients: string[]; instructions: string[]; tags: string[]; mealType: string; keyIngredients: string[] }> {
+/** Coerce an AI-returned nutrition value into a sane positive integer, else undefined. */
+function toNutritionInt(value: unknown, max: number): number | undefined {
+  const n = typeof value === 'string' ? Number(value) : value
+  if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) return undefined
+  return Math.min(Math.round(n), max)
+}
+
+interface ParsedRecipe {
+  title: string
+  ingredients: string[]
+  instructions: string[]
+  tags: string[]
+  mealType: string
+  keyIngredients: string[]
+  calories?: number
+  protein?: number
+  servings?: number
+}
+
+async function parseRecipeWithAI(caption: string): Promise<ParsedRecipe> {
   try {
     // Must use `integration/endpoint` (two path segments) — see worker `/api/integrations/:name/:endpoint`
     const response = await integration.post<OpenAIChatCompletionData>('openai/chat-completion', {
@@ -141,6 +210,9 @@ async function parseRecipeWithAI(caption: string): Promise<{ title: string; ingr
       tags: Array.isArray(parsed.tags) ? parsed.tags : [],
       mealType,
       keyIngredients: Array.isArray(parsed.keyIngredients) ? parsed.keyIngredients : [],
+      calories: toNutritionInt(parsed.calories, 5000),
+      protein: toNutritionInt(parsed.protein, 500),
+      servings: toNutritionInt(parsed.servings, 100),
     }
   } catch (err) {
     console.error('AI parsing failed:', err)
@@ -154,6 +226,56 @@ async function parseRecipeWithAI(caption: string): Promise<{ title: string; ingr
       keyIngredients: [],
     }
   }
+}
+
+/** Apify run-actor kickoff + get-run polling envelopes. */
+type ApifyRunStartData = { jobId?: string; status?: string; datasetId?: string }
+type ApifyRunPollData = {
+  status?: string
+  items?: Array<{ data?: Array<{ start?: string; dur?: string; text?: string }> }>
+}
+
+// Transcript segments a video can produce is unbounded; cap what we hand the
+// AI parser so a long video doesn't blow the token budget.
+const TRANSCRIPT_CHAR_LIMIT = 16000
+
+// Fetch a YouTube video transcript through the Apify transcript actor.
+// run-actor returns a jobId immediately; get-run (free) is polled until the
+// dataset with the caption segments is ready (~10-30s).
+async function fetchYouTubeTranscript(videoId: string): Promise<string> {
+  const startResponse = await integration.post<ApifyRunStartData>('apify/run-actor', {
+    actorId: 'pintostudio/youtube-transcript-scraper',
+    input: { videoUrl: `https://www.youtube.com/watch?v=${videoId}` },
+    maxTotalChargeUsd: 0.1,
+    timeout: 90,
+  })
+
+  const runId = startResponse.data?.jobId
+  if (!startResponse.success || !runId) {
+    throw new Error(startResponse.error || 'Could not start the transcript fetch')
+  }
+
+  const deadline = Date.now() + 75_000
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 4000))
+    const poll = await integration.post<ApifyRunPollData>('apify/get-run', { runId, offset: 0 })
+    const status = poll.data?.status
+    if (status === 'SUCCEEDED') {
+      const segments = poll.data?.items?.[0]?.data
+      const text = (segments ?? [])
+        .map((s) => s.text?.trim())
+        .filter(Boolean)
+        .join(' ')
+      if (!text) {
+        throw new Error('This video has no captions to read a recipe from')
+      }
+      return text.slice(0, TRANSCRIPT_CHAR_LIMIT)
+    }
+    if (status === 'FAILED' || status === 'ABORTED' || status === 'TIMED-OUT') {
+      throw new Error('Could not read this video’s captions')
+    }
+  }
+  throw new Error('Timed out reading the video’s captions — try again')
 }
 
 // Try to extract an Instagram username from the URL or permalink
@@ -234,9 +356,9 @@ function extractAuthorFromCaption(caption: string): string | null {
 }
 
 // Try a single search query and return parsed recipe if found
-async function trySearchQuery(
-  query: string
-): Promise<{ ingredients: string[]; instructions: string[]; tags: string[]; mealType: string; keyIngredients: string[]; sourceUrl: string } | null> {
+type WebSearchRecipe = Omit<ParsedRecipe, 'title'> & { sourceUrl: string }
+
+async function trySearchQuery(query: string): Promise<WebSearchRecipe | null> {
   try {
     const searchResponse = await integration.post<FirecrawlSearchIntegrationData>('firecrawl/search', {
       query,
@@ -270,6 +392,9 @@ async function trySearchQuery(
           tags: parsed.tags,
           mealType: parsed.mealType,
           keyIngredients: parsed.keyIngredients,
+          calories: parsed.calories,
+          protein: parsed.protein,
+          servings: parsed.servings,
           sourceUrl: result.url || '',
         }
       }
@@ -287,7 +412,7 @@ async function trySearchQuery(
 async function searchWebForRecipe(
   recipeTitle: string,
   authorUsername: string
-): Promise<{ ingredients: string[]; instructions: string[]; tags: string[]; mealType: string; keyIngredients: string[]; sourceUrl: string } | null> {
+): Promise<WebSearchRecipe | null> {
   const hasAuthor = authorUsername && authorUsername !== 'Unknown'
   
   // Strategy 1: Search with author name (most targeted — matches the user's approach
@@ -307,9 +432,13 @@ async function searchWebForRecipe(
 
 export default function HomePage() {
   const navigate = useNavigate()
-  const [url, setUrl] = useState('')
+  // The landing hero forwards a pasted link as /add?url=… — read it once on
+  // mount to prefill the input. We deliberately do NOT auto-extract: extraction
+  // costs money and may require sign-in.
+  const [searchParams] = useSearchParams()
+  const [url, setUrl] = useState(() => searchParams.get('url') ?? '')
   const [loading, setLoading] = useState(false)
-  const [loadingStep, setLoadingStep] = useState<'extract' | 'scrape' | 'parse' | 'websearch'>('extract')
+  const [loadingStep, setLoadingStep] = useState<'extract' | 'scrape' | 'transcript' | 'parse' | 'websearch'>('extract')
   const [error, setError] = useState<string | null>(null)
   const [preview, setPreview] = useState<Partial<Recipe> | null>(null)
   const [savingRecipe, setSavingRecipe] = useState(false)
@@ -319,11 +448,10 @@ export default function HomePage() {
   const { isSignedIn } = useAuth()
   const [showAuthModal, setShowAuthModal] = useState(false)
   
-  const { records: recipes } = useQuery('recipes') as { records: RecipeRecord[] }
   const { createConfirmed } = useMutations('recipes')
-  
-  const recentRecipes = recipes?.slice(0, 4) || []
-  
+  const { create: logExtraction } = useMutations('extractionLog')
+  const planGate = usePlanGate()
+
   const extractFromInstagram = useCallback(async (targetUrl: string) => {
     setLoadingStep('extract')
 
@@ -367,6 +495,20 @@ export default function HomePage() {
     }
   }, [])
   
+  const extractFromYouTube = useCallback(async (targetUrl: string, videoId: string) => {
+    setLoadingStep('transcript')
+
+    const transcript = await fetchYouTubeTranscript(videoId)
+
+    return {
+      content: transcript,
+      // YouTube thumbnails are deterministic per video id — no API needed.
+      imageUrl: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
+      sourceUrl: targetUrl,
+      author: 'youtube',
+    }
+  }, [])
+
   const extractFromWebsite = useCallback(async (targetUrl: string) => {
     setLoadingStep('scrape')
     
@@ -406,19 +548,54 @@ export default function HomePage() {
   
   const extractRecipe = useCallback(async () => {
     if (!url.trim()) return
-    
+
+    const targetUrl = url.trim()
+
+    // Platforms we can't read get a clear answer up front — before the
+    // sign-in prompt, since no sign-in will make the link readable.
+    const unsupported = unsupportedHostLabel(targetUrl)
+    if (unsupported) {
+      setError(
+        `${unsupported} links can't be read yet — the platform blocks recipe extraction. ` +
+        'If the creator shared the same recipe on Instagram, YouTube, or a blog, paste that link instead.',
+      )
+      return
+    }
+
+    // Extraction burns integration calls (scrape + AI parse), so it's
+    // sign-in-only — anonymous visitors get the auth overlay instead.
+    if (!isSignedIn) {
+      setShowAuthModal(true)
+      return
+    }
+
+    // Plan gates: YouTube extraction is paid-only; every plan has a monthly
+    // extraction quota (see src/plan-limits.ts).
+    const youTubeVideoId = getYouTubeVideoId(targetUrl)
+    if (youTubeVideoId && !planGate.canUseYouTube) {
+      planGate.promptUpgrade('youtube')
+      return
+    }
+    if (!planGate.canExtract) {
+      planGate.promptUpgrade('extractions')
+      return
+    }
+
     setLoading(true)
     setError(null)
     setPreview(null)
 
     try {
-      const targetUrl = url.trim()
       let extracted: { content: string; imageUrl: string; sourceUrl: string; author: string; title?: string; truncated?: boolean }
-      
+
       if (isInstagramUrl(targetUrl)) {
         // extractFromInstagram already scrapes the post via Firecrawl; a
         // truncated caption flows into the web-search fallback below.
         extracted = await extractFromInstagram(targetUrl)
+      } else if (youTubeVideoId) {
+        // Firecrawl can't scrape YouTube (login-walled), but the spoken
+        // transcript usually contains the full recipe.
+        extracted = await extractFromYouTube(targetUrl, youTubeVideoId)
       } else {
         extracted = await extractFromWebsite(targetUrl)
       }
@@ -432,14 +609,14 @@ export default function HomePage() {
       // of the full caption, cutting off ingredient lists and instructions.
       // For Instagram, we attempt web search BEFORE giving up — many Instagram posts
       // tease a recipe without including it in the caption.
-      let webSearchResult: { ingredients: string[]; instructions: string[]; tags: string[]; mealType: string; keyIngredients: string[]; sourceUrl: string } | null = null
+      let webSearchResult: WebSearchRecipe | null = null
       
       const captionWasTruncated = extracted.truncated === true
       const aiSaidNotRecipe = parsed.title === 'Not a recipe'
       const hasNoRecipeData = parsed.ingredients.length === 0 && parsed.instructions.length === 0
       const looksIncomplete = parsed.ingredients.length > 0 && parsed.ingredients.length <= 3 && parsed.instructions.length === 0
       
-      if (isInstagramUrl(targetUrl) && (aiSaidNotRecipe || captionWasTruncated || hasNoRecipeData || looksIncomplete)) {
+      if (isSocialUrl(targetUrl) && (aiSaidNotRecipe || captionWasTruncated || hasNoRecipeData || looksIncomplete)) {
         // When the AI couldn't extract a usable title (returned "Not a recipe"),
         // try to derive a search query from the raw caption text
         const searchTitle = aiSaidNotRecipe
@@ -478,10 +655,13 @@ export default function HomePage() {
         }
       }
       
+      const finalIngredients = webSearchResult?.ingredients || parsed.ingredients
+      const finalInstructions = webSearchResult?.instructions || parsed.instructions
+
       setPreview({
         title: parsed.title,
-        ingredients: webSearchResult?.ingredients || parsed.ingredients,
-        instructions: webSearchResult?.instructions || parsed.instructions,
+        ingredients: finalIngredients,
+        instructions: finalInstructions,
         tags: webSearchResult?.tags?.length ? webSearchResult.tags : parsed.tags,
         caption: extracted.content.slice(0, 2000), // Truncate for storage
         imageUrl: extracted.imageUrl,
@@ -490,14 +670,25 @@ export default function HomePage() {
         recipeSourceUrl: webSearchResult?.sourceUrl || undefined,
         mealType: toMealType(webSearchResult?.mealType || parsed.mealType || 'other'),
         keyIngredients: webSearchResult?.keyIngredients?.length ? webSearchResult.keyIngredients : parsed.keyIngredients,
+        calories: webSearchResult?.calories ?? parsed.calories,
+        protein: webSearchResult?.protein ?? parsed.protein,
+        servings: webSearchResult?.servings ?? parsed.servings,
       })
+
+      // Meter the extraction against the monthly plan quota — but only when
+      // it actually produced recipe content. Failures throw before this line,
+      // and a silently-degraded parse (AI call failed → title-only stub with
+      // no ingredients or steps) shouldn't burn the user's quota either.
+      if (finalIngredients.length > 0 || finalInstructions.length > 0) {
+        logExtraction({ at: new Date().toISOString(), sourceUrl: extracted.sourceUrl })
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to extract recipe'
       setError(message)
     } finally {
       setLoading(false)
     }
-  }, [url, extractFromInstagram, extractFromWebsite])
+  }, [url, isSignedIn, planGate, logExtraction, extractFromInstagram, extractFromYouTube, extractFromWebsite])
   
   const saveRecipe = useCallback(async () => {
     if (!preview) return
@@ -511,7 +702,12 @@ export default function HomePage() {
       toastError('Not connected', 'Wait for the app to finish loading, then try again.')
       return
     }
-    
+
+    if (!planGate.canSave) {
+      planGate.promptUpgrade('saves')
+      return
+    }
+
     const recipe: Recipe = {
       title: preview.title || 'Untitled Recipe',
       caption: preview.caption || '',
@@ -527,6 +723,9 @@ export default function HomePage() {
       recipeSourceUrl: preview.recipeSourceUrl || '',
       mealType: preview.mealType || 'other',
       keyIngredients: preview.keyIngredients || [],
+      calories: preview.calories,
+      protein: preview.protein,
+      servings: preview.servings,
     }
 
     setSavingRecipe(true)
@@ -547,249 +746,205 @@ export default function HomePage() {
     } finally {
       setSavingRecipe(false)
     }
-  }, [preview, createConfirmed, navigate, isSignedIn, recordStoreReady, toastError, toastSuccess])
+  }, [preview, createConfirmed, navigate, isSignedIn, recordStoreReady, planGate, toastError, toastSuccess])
   
+  const stepLabel =
+    loadingStep === 'extract' ? 'Fetching…'
+    : loadingStep === 'scrape' ? 'Scraping…'
+    : loadingStep === 'transcript' ? 'Reading video…'
+    : loadingStep === 'websearch' ? 'Searching web…'
+    : 'Parsing…'
+
+  const sourceDomain = preview?.recipeSourceUrl
+    ? (() => {
+        try { return new URL(preview.recipeSourceUrl).hostname.replace('www.', '') } catch { return 'website' }
+      })()
+    : ''
+
   return (
     <div className="min-h-full">
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        
-        {/* Main Content Grid */}
-        <div className="grid lg:grid-cols-5 gap-6">
-          
-          {/* Left Column - Main Form */}
-          <div className="lg:col-span-3 space-y-5">
-            {/* Hero Section */}
-            <div className="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent rounded-2xl p-6 border border-primary-border/50">
-              <div className="flex items-start gap-4">
-                <div className="w-14 h-14 bg-surface-elevated rounded-2xl flex items-center justify-center shadow-card flex-shrink-0">
-                  <svg className="w-7 h-7 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
-                  </svg>
-                </div>
-                <div>
-                  <h1 className="text-xl font-bold text-content">Add New Recipe</h1>
-                  <p className="text-content-secondary text-sm mt-1">
-                    Paste a recipe link from Instagram or any website
-                  </p>
-                </div>
-              </div>
-              
-              {/* Input */}
-              <div className="mt-5">
-                <div className="flex gap-2">
-                  <input
-                    type="url"
-                    value={url}
-                    onChange={(e) => setUrl(e.target.value)}
-                    placeholder="https://www.instagram.com/p/... or any recipe URL"
-                    className="flex-1 px-4 py-3 bg-surface-elevated border border-border rounded-xl text-content placeholder:text-content-muted focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary-muted transition-all text-sm"
-                    onKeyDown={(e) => e.key === 'Enter' && extractRecipe()}
-                  />
-                  <Button
-                    onClick={extractRecipe}
-                    disabled={loading || !url.trim()}
-                    className="px-5"
-                  >
-                    {loading ? (
-                      <span className="flex items-center gap-2">
-                        <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                        </svg>
-                        {loadingStep === 'extract' ? 'Fetching...' : loadingStep === 'scrape' ? 'Scraping...' : loadingStep === 'websearch' ? 'Searching web...' : 'Parsing...'}
-                      </span>
-                    ) : 'Extract Recipe'}
-                  </Button>
-                </div>
-                
-                {error && (
-                  <div className="mt-3 p-3 bg-danger-muted border border-danger-border rounded-xl text-danger text-sm">
-                    {error}
-                  </div>
-                )}
-              </div>
+      {showAuthModal && <AuthOverlay onClose={() => setShowAuthModal(false)} />}
+      {planGate.upgradeModal}
+      <div className="max-w-[720px] mx-auto px-[28px] pt-[56px] pb-[72px]">
+
+        {/* Header */}
+        <div className="text-center">
+          <p className="text-[12px] font-bold uppercase tracking-[0.14em] text-primary-deep">
+            Add to your cookbook
+          </p>
+          <h1 className="mt-3 text-[40px] font-extrabold tracking-[-0.03em] leading-[1.05] text-ink">
+            Save a recipe from anywhere
+          </h1>
+          <p className="mt-4 mx-auto max-w-[44ch] text-[16px] leading-[1.55] text-body-soft">
+            Paste a link from Instagram, YouTube, a food blog, or any recipe site — Recipe Box
+            pulls out the ingredients and steps into one clean, saveable card.
+          </p>
+        </div>
+
+        {/* URL row */}
+        <div className="mt-9">
+          <div className="flex gap-3">
+            <input
+              type="url"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://instagram.com/p/… or any recipe URL"
+              className="h-[52px] flex-1 min-w-0 rounded-[14px] bg-surface-soft border border-input px-4 text-[15px] text-ink placeholder:text-faint focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-colors duration-150"
+              onKeyDown={(e) => e.key === 'Enter' && extractRecipe()}
+            />
+            <button
+              onClick={extractRecipe}
+              disabled={loading || !url.trim()}
+              className="h-[52px] shrink-0 flex items-center gap-2 rounded-[14px] bg-primary px-6 text-[15px] font-bold text-primary-foreground shadow-[0_10px_20px_-8px_rgba(226,87,11,0.7)] transition-[background-color,box-shadow,opacity] duration-150 hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-primary"
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  {stepLabel}
+                </>
+              ) : (
+                'Extract'
+              )}
+            </button>
+          </div>
+
+          {/* Supported sources */}
+          <div className="mt-3 flex items-center justify-center gap-2 text-[13px] text-muted-2">
+            <Check className="w-4 h-4 shrink-0 text-success" strokeWidth={2.5} />
+            <span>Works with Instagram · YouTube · NYT Cooking · personal blogs</span>
+          </div>
+
+          {/* Error banner */}
+          {error && (
+            <div className="mt-4 rounded-[14px] border border-destructive/30 bg-destructive/10 px-4 py-3 text-[14px] text-destructive">
+              {error}
             </div>
-            
-            {/* Preview Section */}
-            {preview && (
-              <div className="bg-surface-elevated rounded-2xl shadow-card border border-border overflow-hidden">
-                <div className="p-4 bg-surface-overlay border-b border-border flex items-center justify-between">
-                  <h2 className="font-semibold text-content">Recipe Preview</h2>
-                  <div className="flex gap-2">
-                    <Button variant="ghost" size="sm" onClick={() => setPreview(null)}>
-                      Cancel
-                    </Button>
-                    <Button
-                      size="sm"
-                      onClick={saveRecipe}
-                      disabled={savingRecipe || (isSignedIn && !recordStoreReady)}
-                    >
-                      {savingRecipe ? 'Saving…' : isSignedIn ? 'Save Recipe' : 'Sign in to Save'}
-                    </Button>
-                    {showAuthModal && <AuthOverlay onClose={() => setShowAuthModal(false)} />}
+          )}
+        </div>
+
+        {/* Preview */}
+        {preview && (
+          <div className="mt-10">
+            <p className="text-[12px] font-semibold uppercase tracking-[0.12em] text-muted-2">
+              Preview
+            </p>
+            <div className="mt-3 overflow-hidden rounded-[20px] border border-border bg-card shadow-[0_12px_26px_-18px_rgba(61,35,20,0.4)]">
+              {/* Top region */}
+              <div className="flex gap-5 p-[22px]">
+                {/* Photo tile */}
+                <a
+                  href={preview.instagramUrl || undefined}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="group relative h-[130px] w-[130px] shrink-0 overflow-hidden rounded-[14px] bg-photo-tile"
+                >
+                  {preview.imageUrl ? (
+                    <img
+                      src={preview.imageUrl}
+                      alt={preview.title}
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-faint">
+                      <ExternalLink className="h-6 w-6" />
+                    </div>
+                  )}
+                  <div className="absolute inset-0 flex items-center justify-center bg-ink/0 transition-colors duration-150 group-hover:bg-ink/25">
+                    <ExternalLink className="h-6 w-6 text-white opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
                   </div>
-                </div>
-                
-                <div className="p-5">
-                  <div className="flex gap-5">
-                    {preview.imageUrl && (
+                </a>
+
+                {/* Details */}
+                <div className="min-w-0 flex-1">
+                  {/* Meal type selector */}
+                  <div className="flex flex-wrap gap-1.5">
+                    {MEAL_TYPE_OPTIONS.map((opt) => {
+                      const isSelected = (preview.mealType || 'other') === opt.value
+                      const accent = MEAL_ACCENT[opt.value]
+                      return (
+                        <button
+                          key={opt.value}
+                          onClick={() => setPreview((prev) => (prev ? { ...prev, mealType: opt.value } : prev))}
+                          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-semibold transition-colors duration-150 ${
+                            isSelected ? 'bg-cream' : 'text-muted-2 hover:text-body-soft'
+                          }`}
+                          style={isSelected ? { color: accent } : undefined}
+                        >
+                          <span
+                            className="h-1.5 w-1.5 rounded-full"
+                            style={{ backgroundColor: isSelected ? accent : 'currentColor' }}
+                          />
+                          {opt.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+
+                  <h3 className="mt-2.5 text-[22px] font-extrabold leading-[1.2] tracking-[-0.01em] text-ink">
+                    {preview.title}
+                  </h3>
+                  <p className="mt-1 text-[13.5px] text-muted-2">by @{preview.author}</p>
+
+                  {preview.tags && preview.tags.length > 0 && (
+                    <div className="mt-2.5 flex flex-wrap gap-1.5">
+                      {preview.tags.slice(0, 4).map((tag, i) => (
+                        <span
+                          key={i}
+                          className="rounded-full bg-tag px-2 py-0.5 text-[11.5px] font-semibold capitalize text-[#8a6a4a]"
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {preview.recipeSourceUrl && (
+                    <div className="mt-2.5 flex items-center gap-1.5 text-[12.5px] text-primary-deep">
+                      <Globe className="h-3.5 w-3.5 shrink-0" />
+                      <span>Recipe found on</span>
                       <a
-                        href={preview.instagramUrl}
+                        href={preview.recipeSourceUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="relative w-28 h-28 flex-shrink-0 group rounded-xl overflow-hidden"
+                        className="font-semibold hover:underline"
                       >
-                        <img
-                          src={preview.imageUrl}
-                          alt={preview.title}
-                          className="w-full h-full object-cover"
-                        />
-                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
-                          <svg className="w-7 h-7 text-white opacity-0 group-hover:opacity-100 transition-opacity" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073z"/>
-                            <circle cx="12" cy="12" r="3.5"/>
-                          </svg>
-                        </div>
+                        {sourceDomain}
                       </a>
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-lg font-bold text-content">{preview.title}</h3>
-                      <p className="text-content-secondary text-sm">by @{preview.author}</p>
-                      
-                      {preview.tags && preview.tags.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5 mt-3">
-                          {preview.tags.slice(0, 4).map((tag, i) => (
-                            <span key={i} className="px-2 py-0.5 bg-primary-muted text-primary text-xs rounded-full">
-                              #{tag}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                      
-                      {/* Meal Type Selector */}
-                      <div className="flex items-center gap-2 mt-3">
-                        <span className="text-xs text-content-muted">Meal:</span>
-                        <div className="flex gap-1 flex-wrap">
-                          {MEAL_TYPE_OPTIONS.map((opt) => {
-                            const isSelected = (preview.mealType || 'other') === opt.value
-                            const selectedColorMap: Record<string, string> = {
-                              warning: 'bg-warning/15 text-warning ring-1 ring-warning/30',
-                              primary: 'bg-primary/15 text-primary ring-1 ring-primary/30',
-                              danger: 'bg-danger/15 text-danger ring-1 ring-danger/30',
-                              success: 'bg-success/15 text-success ring-1 ring-success/30',
-                              muted: 'bg-surface-overlay text-content-secondary ring-1 ring-border',
-                            }
-                            const config = MEAL_TYPE_CONFIG[opt.value]
-                            const activeClass = selectedColorMap[config.color] || selectedColorMap.muted
-                            return (
-                              <button
-                                key={opt.value}
-                                onClick={() => setPreview(prev => prev ? { ...prev, mealType: opt.value } : prev)}
-                                className={`px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${
-                                  isSelected
-                                    ? activeClass
-                                    : 'bg-surface-overlay/50 text-content-muted hover:text-content-secondary hover:bg-surface-overlay'
-                                }`}
-                              >
-                                {opt.label}
-                              </button>
-                            )
-                          })}
-                        </div>
-                      </div>
-                      
-                      <div className="flex gap-4 mt-3 text-sm text-content-muted">
-                        <span>{preview.ingredients?.length || 0} ingredients</span>
-                        <span>{preview.instructions?.length || 0} steps</span>
-                      </div>
-                      
-                      {preview.recipeSourceUrl && (
-                        <div className="mt-3 flex items-center gap-1.5 text-xs text-info">
-                          <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
-                          </svg>
-                          <span>Recipe found on </span>
-                          <a
-                            href={preview.recipeSourceUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-primary hover:underline font-medium"
-                          >
-                            {(() => {
-                              try { return new URL(preview.recipeSourceUrl).hostname.replace('www.', '') } catch { return 'website' }
-                            })()}
-                          </a>
-                        </div>
-                      )}
                     </div>
-                  </div>
+                  )}
                 </div>
               </div>
-            )}
 
-          </div>
-          
-          {/* Right Column - Recent Recipes */}
-          <div className="lg:col-span-2 space-y-5">
-            {/* Recent Recipes */}
-            <div className="bg-surface-elevated rounded-2xl border border-border overflow-hidden">
-              <div className="p-4 border-b border-border flex items-center justify-between">
-                <h3 className="font-semibold text-content">Recent Recipes</h3>
-                {recipes && recipes.length > 0 && (
-                  <Link to="/recipes" className="text-xs text-primary hover:underline">
-                    View all
-                  </Link>
-                )}
+              {/* Footer bar */}
+              <div className="flex items-center justify-between gap-4 border-t border-border bg-surface-soft p-4">
+                <div className="text-[13px] text-muted-2">
+                  {preview.ingredients?.length || 0} ingredients · {preview.instructions?.length || 0} steps
+                  {preview.calories != null && (
+                    <>
+                      {' '}· ≈{preview.calories} kcal
+                      {preview.protein != null && ` · ${preview.protein}g protein`} / serving
+                    </>
+                  )}
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    onClick={() => setPreview(null)}
+                    className="h-9 rounded-[12px] border border-input bg-card px-3.5 text-[13.5px] font-semibold text-body-soft transition-colors duration-150 hover:bg-surface-soft"
+                  >
+                    Discard
+                  </button>
+                  <button
+                    onClick={saveRecipe}
+                    disabled={savingRecipe || (isSignedIn && !recordStoreReady)}
+                    className="h-9 rounded-[12px] bg-ink px-4 text-[13.5px] font-semibold text-[#fdf6ec] transition-colors duration-150 hover:bg-ink/90 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-ink"
+                  >
+                    {savingRecipe ? 'Saving…' : isSignedIn ? 'Save to cookbook' : 'Sign in to Save'}
+                  </button>
+                </div>
               </div>
-              
-              {recentRecipes.length === 0 ? (
-                <div className="p-6 text-center">
-                  <div className="w-12 h-12 mx-auto mb-3 bg-surface-overlay rounded-xl flex items-center justify-center">
-                    <svg className="w-6 h-6 text-content-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-                    </svg>
-                  </div>
-                  <p className="text-sm text-content-secondary">No recipes yet</p>
-                  <p className="text-xs text-content-muted mt-1">Add your first one above!</p>
-                </div>
-              ) : (
-                <div className="divide-y divide-border">
-                  {recentRecipes.map((record) => (
-                    <Link
-                      key={record.recordId}
-                      to={`/recipes/${record.recordId}`}
-                      className="flex items-center gap-3 p-3 hover:bg-surface-overlay/50 transition-colors"
-                    >
-                      {record.data.imageUrl ? (
-                        <img
-                          src={record.data.imageUrl}
-                          alt={record.data.title}
-                          className="w-12 h-12 rounded-lg object-cover flex-shrink-0"
-                        />
-                      ) : (
-                        <div className="w-12 h-12 rounded-lg bg-surface-overlay flex items-center justify-center flex-shrink-0">
-                          <svg className="w-6 h-6 text-content-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
-                          </svg>
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-content truncate flex items-center gap-1">
-                          {record.data.starred && <svg className="w-3.5 h-3.5 text-warning flex-shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>}
-                          <span className="truncate">{record.data.title}</span>
-                        </p>
-                        <p className="text-xs text-content-muted">@{record.data.author}</p>
-                      </div>
-                      <svg className="w-4 h-4 text-content-muted flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                      </svg>
-                    </Link>
-                  ))}
-                </div>
-              )}
             </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   )
