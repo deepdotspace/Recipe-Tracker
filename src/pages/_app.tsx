@@ -5,7 +5,7 @@
  * Providers → auth gate → nav + page outlet.
  */
 
-import { Suspense, type ReactNode } from 'react'
+import { Suspense, useEffect, useRef, type ReactNode } from 'react'
 import { Outlet, useLocation, useRouteError } from 'react-router-dom'
 import { DeepSpaceAuthProvider, useAuthStatus } from 'deepspace'
 import { RecordProvider, RecordScope } from 'deepspace'
@@ -19,6 +19,14 @@ export default function App() {
   // The landing page at `/` owns the whole viewport — no app chrome on top.
   const { pathname } = useLocation()
   const isLanding = pathname === '/'
+  const mainRef = useRef<HTMLElement>(null)
+
+  // Reset the content pane to the top on every route change. Scrolling happens
+  // inside <main> (not the window), so opening a recipe from mid-list would
+  // otherwise inherit the list's scroll offset and land in the middle.
+  useEffect(() => {
+    mainRef.current?.scrollTo({ top: 0 })
+  }, [pathname])
 
   return (
     <ToastProvider>
@@ -30,7 +38,7 @@ export default function App() {
               gradient-bloom backdrop was a deliberate removal. */}
           <div data-testid="app-root" className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
             {!isLanding && <Navigation />}
-            <main className="flex-1 overflow-y-auto min-h-0">
+            <main ref={mainRef} className="flex-1 overflow-y-auto min-h-0">
               <Suspense fallback={<div className="flex items-center justify-center h-full text-muted-foreground">Loading...</div>}>
                 <Outlet />
               </Suspense>

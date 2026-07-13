@@ -842,6 +842,8 @@ export default function HomePage() {
                     <img
                       src={preview.imageUrl}
                       alt={preview.title}
+                      referrerPolicy="no-referrer"
+                      onError={(e) => { e.currentTarget.style.display = 'none' }}
                       className="h-full w-full object-cover"
                     />
                   ) : (

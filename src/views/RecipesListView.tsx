@@ -5,8 +5,9 @@
 import { useState, useCallback, useMemo } from 'react'
 import { useQuery, useMutations } from 'deepspace'
 import { Link, useNavigate } from 'react-router-dom'
-import { Plus, Search, Star, List, Clock, ArrowRight, BookOpen, ChefHat } from 'lucide-react'
+import { Plus, Search, Star, List, Clock, ArrowRight, BookOpen } from 'lucide-react'
 import { MEAL_TYPE_OPTIONS, MEAL_ACCENT, type MealType } from '../constants'
+import { RecipeImage } from '../components/RecipeImage'
 import { useAuthGate } from '../hooks/useAuthGate'
 import { useConfirm } from '../hooks/useConfirm'
 
@@ -228,6 +229,8 @@ export default function RecipesPage() {
             <img
               src={featuredRecipe.data.imageUrl}
               alt={featuredRecipe.data.title}
+              referrerPolicy="no-referrer"
+              onError={(e) => { e.currentTarget.style.display = 'none' }}
               className="absolute inset-0 h-full w-full object-cover"
             />
           )}
@@ -310,17 +313,7 @@ export default function RecipesPage() {
               >
                 {/* Image */}
                 <div className="relative h-[168px] w-full overflow-hidden bg-photo-tile">
-                  {record.data.imageUrl ? (
-                    <img
-                      src={record.data.imageUrl}
-                      alt={record.data.title}
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center text-[#c9b299]">
-                      <ChefHat size={44} strokeWidth={1.4} />
-                    </div>
-                  )}
+                  <RecipeImage src={record.data.imageUrl} alt={record.data.title} />
 
                   {/* Meal chip */}
                   {mealOpt && (

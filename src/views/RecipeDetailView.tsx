@@ -17,6 +17,7 @@ import {
   ExternalLink,
 } from 'lucide-react'
 import { Button, useToast } from '../components/ui'
+import { RecipeImage } from '../components/RecipeImage'
 import { MEAL_TYPE_OPTIONS, MEAL_ACCENT, type MealType } from '../constants'
 import { useAuthGate } from '../hooks/useAuthGate'
 import { useConfirm } from '../hooks/useConfirm'
@@ -364,11 +365,11 @@ export default function RecipeDetailPage() {
                   rel="noopener noreferrer"
                   className="block aspect-square rounded-[22px] border border-border overflow-hidden bg-photo-tile shadow-[0_22px_44px_-24px_rgba(61,35,20,0.55)]"
                 >
-                  <img src={data.imageUrl} alt={data.title} className="w-full h-full object-cover" />
+                  <RecipeImage src={data.imageUrl} alt={data.title} iconSize={56} />
                 </a>
               ) : (
                 <div className="aspect-square rounded-[22px] border border-border overflow-hidden bg-photo-tile shadow-[0_22px_44px_-24px_rgba(61,35,20,0.55)]">
-                  <img src={data.imageUrl} alt={data.title} className="w-full h-full object-cover" />
+                  <RecipeImage src={data.imageUrl} alt={data.title} iconSize={56} />
                 </div>
               )
             ) : (

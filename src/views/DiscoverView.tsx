@@ -12,6 +12,7 @@ import { useQuery, useMutations, useRecordContext } from 'deepspace'
 import { Clock, Flame, Dumbbell, Users, Check, Plus, ArrowRight } from 'lucide-react'
 import { Button, Modal, useToast } from '../components/ui'
 import { MEAL_ACCENT } from '../constants'
+import { RecipeImage } from '../components/RecipeImage'
 import { useAuthGate } from '../hooks/useAuthGate'
 import { usePlanGate } from '../hooks/usePlanGate'
 import {
@@ -133,12 +134,7 @@ export default function DiscoverPage() {
                   className="relative block h-[168px] overflow-hidden bg-photo-tile text-left"
                   aria-label={`View ${recipe.title}`}
                 >
-                  <img
-                    src={recipe.imageUrl}
-                    alt={recipe.title}
-                    loading="lazy"
-                    className="h-full w-full object-cover"
-                  />
+                  <RecipeImage src={recipe.imageUrl} alt={recipe.title} />
                   <span
                     className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-white/92 px-2.5 py-1 text-[12px] font-semibold capitalize shadow-[0_2px_8px_rgba(61,35,20,0.15)]"
                     style={{ color: MEAL_ACCENT[recipe.mealType] }}
@@ -235,6 +231,8 @@ export default function DiscoverPage() {
               <img
                 src={selected.imageUrl}
                 alt={selected.title}
+                referrerPolicy="no-referrer"
+                onError={(e) => { e.currentTarget.style.display = 'none' }}
                 className="h-52 w-full rounded-xl object-cover"
               />
               <div className="mt-4 flex flex-wrap items-center gap-4 text-sm text-content-secondary">

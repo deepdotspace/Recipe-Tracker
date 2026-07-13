@@ -60,7 +60,8 @@ export default function Navigation() {
     path === '/add' ? location.pathname === '/add' : location.pathname.startsWith(path)
 
   return (
-    <header className="sticky top-0 z-40 border-b border-border bg-background/85 backdrop-blur-[12px]">
+    <>
+      <header className="sticky top-0 z-40 border-b border-border bg-background/85 backdrop-blur-[12px]">
       <nav
         data-testid="app-navigation"
         className="mx-auto flex h-[66px] max-w-[1160px] items-center justify-between gap-3 px-7 max-sm:px-4"
@@ -170,8 +171,12 @@ export default function Navigation() {
           )}
         </div>
       </nav>
+      </header>
 
+      {/* Rendered OUTSIDE <header>: the header's backdrop-blur establishes a
+          containing block for position:fixed, which would clip and mis-center
+          the auth overlay to the 66px bar instead of the viewport. */}
       {showAuthModal && <AuthOverlay onClose={() => setShowAuthModal(false)} />}
-    </header>
+    </>
   )
 }
