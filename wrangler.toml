@@ -36,6 +36,11 @@ bindings = [
 
 [vars]
 APP_NAME = "recipe-tracker"
+# Immutable app identity (new in SDK 0.5.x). This app was deployed under 0.4.x
+# by `name` alone; the platform backfilled its id during the app-identity
+# cutover, and the id for a legacy app is its subdomain. This literal matches
+# what `deepspace deploy` would adopt via resolveOwnedAppId — NOT a fresh mint.
+DEEPSPACE_APP_ID = "recipe-tracker"
 
 [dev]
 port = 8780
